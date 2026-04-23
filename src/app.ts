@@ -19,6 +19,7 @@ import deviceTokenRouter from "@/routes/notifications/device-tokens";
 import notificationsRouter from "@/routes/notifications/notifications";
 import assignShortsRouter from "@/routes/assign-shorts/assign-shorts";
 import cloudinaryWebhookRouter from "@/routes/webhooks/cloudinary";
+import profilesRouter from "@/routes/profiles/profiles";
 
 
 
@@ -63,6 +64,7 @@ app.get('/api/health', getHealth);
 function registerRouters(app: Application) {
   app.use("/api", superAdminRouter);
   app.use("/api", accountManagementRouter);
+  app.use("/api", profilesRouter);
   app.use("/api", shortVideosRouter);
   app.use("/api", popularCourseRouter);
   app.use("/api", courseVideosRouter);

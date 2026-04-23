@@ -4,6 +4,7 @@ import { fromNodeHeaders } from "better-auth/node";
 import { sendAccountCredentialsEmail } from "@/utils/mailer";
 import { subscribeEmailToMailchimpSafe } from "@/utils/mailchimp";
 import { ClinicalAssignment } from "@/models/clinical-assignment";
+import { Profile } from "@/models/profile";
 
 
 // Role-based user creation endpoint
@@ -517,4 +518,90 @@ export const UpdateUser = async (
   } catch (error) {
     return next(error);
   }
+};
+
+export const AdminListProfiles = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const perm = await auth.api.userHasPermission({
+      body: { permissions: { profile: ["manage"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!perm?.success) return res.status(403).json({ message: "Forbidden" });
+
+    const userId = typeof req.query.userId === "string" ? req.query.userId.trim() : "";
+    if (!userId) return res.status(400).json({ message: "userId query param is required" });
+
+    const profiles = await Profile.find({ userId }).sort({ createdAt: 1 }).lean();
+    return res.status(200).json({ data: profiles });
+  } catch (err) { next(err); }
+};
+
+export const AdminCreateProfile = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const perm = await auth.api.userHasPermission({
+      body: { permissions: { profile: ["manage"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!perm?.success) return res.status(403).json({ message: "Forbidden" });
+
+    const userId = typeof req.body.userId === "string" ? req.body.userId.trim() : "";
+    if (!userId) return res.status(400).json({ message: "userId is required" });
+
+    const count = await Profile.countDocuments({ userId });
+    if (count >= 5) return res.status(400).json({ message: "Maximum 5 profiles allowed" });
+
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    if (!name) return res.status(400).json({ message: "Profile name is required" });
+    const avatar = typeof req.body.avatar === "string" ? req.body.avatar.trim() : "";
+    const isDefault = count === 0;
+
+    const profile = await Profile.create({ userId, name, avatar, isDefault });
+    return res.status(201).json({ data: profile });
+  } catch (err) { next(err); }
+};
+
+export const AdminUpdateProfile = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const perm = await auth.api.userHasPermission({
+      body: { permissions: { profile: ["manage"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!perm?.success) return res.status(403).json({ message: "Forbidden" });
+
+    const { profileId } = req.params;
+    const profile = await Profile.findById(profileId);
+    if (!profile) return res.status(404).json({ message: "Profile not found" });
+
+    if (typeof req.body.name === "string" && req.body.name.trim()) {
+      profile.name = req.body.name.trim();
+    }
+    if (typeof req.body.avatar === "string") {
+      profile.avatar = req.body.avatar.trim();
+    }
+    await profile.save();
+
+    return res.status(200).json({ data: profile });
+  } catch (err) { next(err); }
+};
+
+export const AdminDeleteProfile = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const perm = await auth.api.userHasPermission({
+      body: { permissions: { profile: ["manage"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!perm?.success) return res.status(403).json({ message: "Forbidden" });
+
+    const { profileId } = req.params;
+    const profile = await Profile.findById(profileId);
+    if (!profile) return res.status(404).json({ message: "Profile not found" });
+
+    const totalCount = await Profile.countDocuments({ userId: profile.userId });
+    if (totalCount <= 1) {
+      return res.status(400).json({ message: "Cannot delete the only profile" });
+    }
+
+    await profile.deleteOne();
+    return res.status(200).json({ data: { deleted: true } });
+  } catch (err) { next(err); }
 };

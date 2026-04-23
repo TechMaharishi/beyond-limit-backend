@@ -23,7 +23,7 @@ const uri = process.env.MONGO_URI;
 if (!uri) throw new Error("MONGO_URI missing");
 
 const client = new MongoClient(uri);
-const db = client.db();
+export const db = client.db();
 
 export const auth = betterAuth({
   database: mongodbAdapter(db),
@@ -38,6 +38,15 @@ export const auth = betterAuth({
       await sendPasswordResetSuccessEmail({
         email: data.user.email,
       });
+    },
+  },
+  session: {
+    additionalFields: {
+      activeProfileId: {
+        type: "string",
+        required: false,
+        defaultValue: null,
+      },
     },
   },
   user: {
@@ -107,6 +116,27 @@ export const auth = betterAuth({
     }),
     expo()  
   ],
+  databaseHooks: {
+    user: {
+      create: {
+        after: async (user) => {
+          const role = (user as any).role ?? "user";
+          if (role !== "user") return;
+          try {
+            const { Profile } = await import("@/models/profile");
+            await Profile.create({
+              userId: user.id,
+              name: "My Profile",
+              avatar: "",
+              isDefault: true,
+            });
+          } catch (err) {
+            console.error("[databaseHooks] Failed to auto-create profile:", err);
+          }
+        },
+      },
+    },
+  },
   trustedOrigins: [process.env.CLIENT_ORIGIN1, process.env.CLIENT_ORIGIN2, "http://localhost:5173", "https://blpt-web.vercel.app"],
   advanced: {
         defaultCookieAttributes: {

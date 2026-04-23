@@ -14,6 +14,7 @@ const statement = {
   tag: ["create", "delete", "update"],
   ticket: ["create", "resolve", "view"],
   user: ["ban", "create", "list", "delete", "reset-password", "update"],
+  profile: ["create", "view", "update", "delete", "manage"],
 } as const;
 
 export const ac = createAccessControl(statement);
@@ -26,6 +27,7 @@ export const user = ac.newRole({
   course: ["view"],
   user: ["list"],
   ticket: ["create", "view"],
+  profile: ["create", "view", "update", "delete"],
 });
 
 export const trainee = ac.newRole({
@@ -37,6 +39,7 @@ export const trainee = ac.newRole({
   course: ["view"],
   user: ["list"],
   ticket: ["create", "view"],
+  profile: ["view"],
 });
 
 export const trainer = ac.newRole({
@@ -49,6 +52,7 @@ export const trainer = ac.newRole({
   course: ["create", "update", "delete", "view"],
   user: ["list", "ban"],
   ticket: ["create", "view"],
+  profile: ["view"],
 });
 
 export const admin = ac.newRole({
@@ -62,4 +66,5 @@ export const admin = ac.newRole({
   tag: ["create", "delete", "update"],
   ticket: ["resolve", "view"],
   user: ["ban", "create", "list", "delete", "reset-password", "update"],
+  profile: ["create", "view", "update", "delete", "manage"],
 });

@@ -1,5 +1,5 @@
 import express from "express";
-import { CreateRolebaseUser, ListUser, ListUserBadPagination, SetUserRole, ResetUserPassword, BanUser, UnbanUser, DeleteUser, DeleteUsersBulk, UpdateUser } from "@/controllers/onboarding/admin";
+import { CreateRolebaseUser, ListUser, ListUserBadPagination, SetUserRole, ResetUserPassword, BanUser, UnbanUser, DeleteUser, DeleteUsersBulk, UpdateUser, AdminListProfiles, AdminCreateProfile, AdminUpdateProfile, AdminDeleteProfile } from "@/controllers/onboarding/admin";
 
 
 const superAdminRouter = express.Router();
@@ -14,5 +14,10 @@ superAdminRouter.post("/admin/unban-user", UnbanUser);
 superAdminRouter.post("/admin/delete-user", DeleteUser);
 superAdminRouter.post("/admin/delete-users", DeleteUsersBulk);
 superAdminRouter.post("/admin/update-user", UpdateUser);
+
+superAdminRouter.get("/admin/profiles", AdminListProfiles);
+superAdminRouter.post("/admin/profiles", AdminCreateProfile);
+superAdminRouter.patch("/admin/profiles/:profileId", AdminUpdateProfile);
+superAdminRouter.delete("/admin/profiles/:profileId", AdminDeleteProfile);
 
 export default superAdminRouter;
