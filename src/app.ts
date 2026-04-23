@@ -7,8 +7,8 @@ import { toNodeHandler } from 'better-auth/node';
 import { auth } from '@/lib/auth';
 import logger from "@/utils/logger";
 import { APIError } from 'better-auth/api';
-import superAdminRouter from "@/routes/onboarding/admin";
-import accountManagementRouter from "@/routes/onboarding/account-managemnt";
+import superAdminRouter from "@/routes/user/admin";
+import accountManagementRouter from "@/routes/user/account";
 import shortVideosRouter from "@/routes/content-management/short-videos";
 import courseVideosRouter from "@/routes/content-management/course-videos";
 import supportRouter from "@/routes/support/support";
@@ -19,7 +19,7 @@ import deviceTokenRouter from "@/routes/notifications/device-tokens";
 import notificationsRouter from "@/routes/notifications/notifications";
 import assignShortsRouter from "@/routes/assign-shorts/assign-shorts";
 import cloudinaryWebhookRouter from "@/routes/webhooks/cloudinary";
-import profilesRouter from "@/routes/profiles/profiles";
+import profilesRouter from "@/routes/user/profiles";
 
 
 

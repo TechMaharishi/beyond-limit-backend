@@ -1,10 +1,11 @@
 import { NextFunction, Request, Response } from "express";
-import { auth } from "@/lib/auth";
+import { auth, db } from "@/lib/auth";
 import { fromNodeHeaders } from "better-auth/node";
 import { sendAccountCredentialsEmail } from "@/utils/mailer";
 import { subscribeEmailToMailchimpSafe } from "@/utils/mailchimp";
 import { ClinicalAssignment } from "@/models/clinical-assignment";
 import { Profile } from "@/models/profile";
+import { clearProfileFromAllSessions, clearAllActiveProfilesForUser } from "@/lib/profile-session";
 
 
 // Role-based user creation endpoint
@@ -322,13 +323,63 @@ export const SetUserRole = async (
     if (!permission?.success) {
       return res.status(403).json({ error: "Not allowed to set user role" });
     }
+    const targetUserId = String(req.body.userId || "").trim();
+    const newRole = String(req.body.role || "").trim();
+    const validRoles = ["admin", "trainer", "trainee", "user"] as const;
+    if (!validRoles.includes(newRole as any)) {
+      return res.status(400).json({ error: "Invalid role. Must be one of: admin, trainer, trainee, user" });
+    }
+
+    // Snapshot the current role so we can revert if the profile step fails.
+    const targetUser = await db.collection("user").findOne({ id: targetUserId });
+    if (!targetUser) return res.status(404).json({ error: "User not found" });
+    const previousRole = String(targetUser.role || "user");
+
     const data = await auth.api.setRole({
-      body: {
-        userId: req.body.userId,
-        role: req.body.role,
-      },
+      body: { userId: targetUserId, role: newRole as typeof validRoles[number] },
       headers: fromNodeHeaders(req.headers),
     });
+
+    // Role change and profile sync are one business operation. If the profile
+    // step fails we attempt a compensating rollback of the role.
+    try {
+      if (newRole === "user") {
+        await Profile.findOneAndUpdate(
+          { userId: targetUserId, isDefault: true },
+          { $setOnInsert: { userId: targetUserId, name: "My Profile", avatar: "", isDefault: true } },
+          { upsert: true }
+        );
+      } else {
+        // Profile.deleteMany is the hard, irreversible operation — it drives the rollback
+        // decision. clearAllActiveProfilesForUser is soft (session metadata only): stale
+        // activeProfileId values self-heal via ListMyProfiles revalidation, so a failure
+        // here must not trigger a role rollback that would leave the user with zero profiles.
+        await Profile.deleteMany({ userId: targetUserId });
+        await clearAllActiveProfilesForUser(targetUserId).catch((err) =>
+          console.error(`[SetUserRole] Session clearing failed for user ${targetUserId}:`, err)
+        );
+      }
+    } catch (profileErr) {
+      // Profile work failed — attempt to revert the role change.
+      try {
+        await auth.api.setRole({
+          body: { userId: targetUserId, role: previousRole as typeof validRoles[number] },
+          headers: fromNodeHeaders(req.headers),
+        });
+      } catch (revertErr) {
+        // Both the profile step and the rollback failed — the system is now inconsistent.
+        // Log everything for manual intervention and return 500.
+        console.error(
+          `CRITICAL: Role for user ${targetUserId} was changed to "${newRole}" but profile cleanup failed, ` +
+          `and role revert to "${previousRole}" also failed. Manual intervention required.`,
+          { profileErr, revertErr }
+        );
+        return res.status(500).json({ error: "Role change succeeded but cleanup failed and could not be reverted. Manual intervention required." });
+      }
+      // Rollback succeeded — surface the original error to the caller.
+      return next(profileErr);
+    }
+
     return res.status(200).json({ data });
   } catch (error) {
     return next(error);
@@ -520,6 +571,19 @@ export const UpdateUser = async (
   }
 };
 
+async function assertTargetIsUserRole(userId: string, res: Response): Promise<boolean> {
+  const targetUser = await db.collection("user").findOne({ id: userId });
+  if (!targetUser) {
+    res.status(404).json({ message: "User not found" });
+    return false;
+  }
+  if (targetUser.role !== "user") {
+    res.status(400).json({ message: "Profiles can only be managed for accounts with role 'user'" });
+    return false;
+  }
+  return true;
+}
+
 export const AdminListProfiles = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const perm = await auth.api.userHasPermission({
@@ -530,6 +594,7 @@ export const AdminListProfiles = async (req: Request, res: Response, next: NextF
 
     const userId = typeof req.query.userId === "string" ? req.query.userId.trim() : "";
     if (!userId) return res.status(400).json({ message: "userId query param is required" });
+    if (!(await assertTargetIsUserRole(userId, res))) return;
 
     const profiles = await Profile.find({ userId }).sort({ createdAt: 1 }).lean();
     return res.status(200).json({ data: profiles });
@@ -546,17 +611,36 @@ export const AdminCreateProfile = async (req: Request, res: Response, next: Next
 
     const userId = typeof req.body.userId === "string" ? req.body.userId.trim() : "";
     if (!userId) return res.status(400).json({ message: "userId is required" });
-
-    const count = await Profile.countDocuments({ userId });
-    if (count >= 5) return res.status(400).json({ message: "Maximum 5 profiles allowed" });
+    if (!(await assertTargetIsUserRole(userId, res))) return;
 
     const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
     if (!name) return res.status(400).json({ message: "Profile name is required" });
     const avatar = typeof req.body.avatar === "string" ? req.body.avatar.trim() : "";
-    const isDefault = count === 0;
 
-    const profile = await Profile.create({ userId, name, avatar, isDefault });
-    return res.status(201).json({ data: profile });
+    let created: any = null;
+    let limitExceeded = false;
+    const mongoSession = await Profile.startSession();
+    try {
+      await mongoSession.withTransaction(async () => {
+        const count = await Profile.countDocuments({ userId }).session(mongoSession);
+        if (count >= 5) {
+          limitExceeded = true;
+          return;
+        }
+        const docs = await Profile.create(
+          [{ userId, name, avatar, isDefault: count === 0 }],
+          { session: mongoSession }
+        );
+        created = docs[0];
+      });
+    } finally {
+      await mongoSession.endSession();
+    }
+
+    if (limitExceeded) {
+      return res.status(400).json({ message: "Maximum 5 profiles allowed" });
+    }
+    return res.status(201).json({ data: created });
   } catch (err) { next(err); }
 };
 
@@ -571,6 +655,9 @@ export const AdminUpdateProfile = async (req: Request, res: Response, next: Next
     const { profileId } = req.params;
     const profile = await Profile.findById(profileId);
     if (!profile) return res.status(404).json({ message: "Profile not found" });
+    // Verify the profile's owner is still a "user" role account. If their role was
+    // changed since the profile was created, editing it would violate the invariant.
+    if (!(await assertTargetIsUserRole(profile.userId, res))) return;
 
     if (typeof req.body.name === "string" && req.body.name.trim()) {
       profile.name = req.body.name.trim();
@@ -596,12 +683,27 @@ export const AdminDeleteProfile = async (req: Request, res: Response, next: Next
     const profile = await Profile.findById(profileId);
     if (!profile) return res.status(404).json({ message: "Profile not found" });
 
-    const totalCount = await Profile.countDocuments({ userId: profile.userId });
-    if (totalCount <= 1) {
-      return res.status(400).json({ message: "Cannot delete the only profile" });
+    // Check whether the profile owner is still a "user" role account.
+    const owner = await db.collection("user").findOne({ id: profile.userId });
+    const ownerIsUser = owner?.role === "user";
+
+    if (ownerIsUser) {
+      // Normal user account — protect against leaving them with zero profiles.
+      const totalCount = await Profile.countDocuments({ userId: profile.userId });
+      if (totalCount <= 1) {
+        return res.status(400).json({ message: "Cannot delete the only profile" });
+      }
     }
+    // If the owner is no longer a "user" (role was changed, leaving orphan profiles),
+    // admin may delete even the last remaining profile as part of data cleanup.
 
     await profile.deleteOne();
+    // Clear this profile from all open sessions. The profile is already gone, so a
+    // 500 here would be misleading — log the failure instead of blocking the response.
+    await clearProfileFromAllSessions(profile.userId, String(profileId)).catch((err) =>
+      console.error(`[AdminDeleteProfile] Session cleanup failed for profile ${String(profileId)}:`, err)
+    );
+
     return res.status(200).json({ data: { deleted: true } });
   } catch (err) { next(err); }
 };

@@ -5,7 +5,7 @@ import {
   UpdateMyProfile,
   DeleteMyProfile,
   SwitchProfile,
-} from "@/controllers/profiles/profiles";
+} from "@/controllers/user/profiles";
 
 const profilesRouter = express.Router();
 

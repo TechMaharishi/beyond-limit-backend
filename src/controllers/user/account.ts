@@ -18,6 +18,7 @@ export const SignupUser = async (req: Request, res: Response, next: NextFunction
         password: req.body.password,
         newsletter,
         accountType: "free",
+        rememberMe: req.body.rememberMe,
       }
     });
     const firstName = typeof req.body.name === "string" ? req.body.name.trim() : undefined;

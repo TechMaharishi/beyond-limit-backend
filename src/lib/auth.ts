@@ -69,11 +69,21 @@ export const auth = betterAuth({
     },
     deleteUser: {
       enabled: true,
-      beforeDelete: async (user, request) => {
+      beforeDelete: async (user) => {
         if (user.email.includes("admin")) {
           throw new APIError("BAD_REQUEST", {
             message: "Admin accounts can't be deleted",
           });
+        }
+        // Clean up all profiles belonging to this user before the account is removed.
+        // Covers both single delete and bulk delete flows since both go through removeUser.
+        // We log failures but do not block deletion — an undeleteable account is worse
+        // than an orphan profile document that admin can clean up manually.
+        try {
+          const { Profile } = await import("@/models/profile");
+          await Profile.deleteMany({ userId: user.id });
+        } catch (err) {
+          console.error(`[beforeDelete] Failed to clean up profiles for user ${user.id}:`, err);
         }
       },
     },
@@ -124,12 +134,11 @@ export const auth = betterAuth({
           if (role !== "user") return;
           try {
             const { Profile } = await import("@/models/profile");
-            await Profile.create({
-              userId: user.id,
-              name: "My Profile",
-              avatar: "",
-              isDefault: true,
-            });
+            await Profile.findOneAndUpdate(
+              { userId: user.id, isDefault: true },
+              { $setOnInsert: { userId: user.id, name: "My Profile", avatar: "", isDefault: true } },
+              { upsert: true }
+            );
           } catch (err) {
             console.error("[databaseHooks] Failed to auto-create profile:", err);
           }

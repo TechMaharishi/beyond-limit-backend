@@ -1,5 +1,5 @@
 import express from "express";
-import { SignupUser, SendVerificationOTP, VerifyEmailOTP, SigninUser, SignoutUser, UpdatePasswordUser, getMe, DeleteUser, ForgetPasswordEmailOTP, CheckForgetPasswordEmailOTP, ChangeForgetPasswordEmailOTP, UpdateAccountInfo, UploadProfilePhoto, RemoveProfilePhoto } from '@/controllers/onboarding/account-management'
+import { SignupUser, SendVerificationOTP, VerifyEmailOTP, SigninUser, SignoutUser, UpdatePasswordUser, getMe, DeleteUser, ForgetPasswordEmailOTP, CheckForgetPasswordEmailOTP, ChangeForgetPasswordEmailOTP, UpdateAccountInfo, UploadProfilePhoto, RemoveProfilePhoto } from '@/controllers/user/account'
 import { upload } from "@/config/cloudinary";
 
 

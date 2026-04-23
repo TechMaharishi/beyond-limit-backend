@@ -1,5 +1,5 @@
 import express from "express";
-import { CreateRolebaseUser, ListUser, ListUserBadPagination, SetUserRole, ResetUserPassword, BanUser, UnbanUser, DeleteUser, DeleteUsersBulk, UpdateUser, AdminListProfiles, AdminCreateProfile, AdminUpdateProfile, AdminDeleteProfile } from "@/controllers/onboarding/admin";
+import { CreateRolebaseUser, ListUser, ListUserBadPagination, SetUserRole, ResetUserPassword, BanUser, UnbanUser, DeleteUser, DeleteUsersBulk, UpdateUser, AdminListProfiles, AdminCreateProfile, AdminUpdateProfile, AdminDeleteProfile } from "@/controllers/user/admin";
 
 
 const superAdminRouter = express.Router();
