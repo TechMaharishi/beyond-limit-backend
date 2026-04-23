@@ -31,7 +31,7 @@ export const createShortVideo = async (
     }
 
     const canCreate = await auth.api.userHasPermission({
-      body: { permission: { shortVideo: ["create"] } },
+      body: { permissions: { shortVideo: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canCreate?.success) {
@@ -390,7 +390,7 @@ export const getAllShortVideos = async (
     }
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { shortVideoStatus: ["view"] } },
+      body: { permissions: { shortVideoStatus: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -548,7 +548,7 @@ export const getShortVideo = async (
     }
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { shortVideo: ["view"] } },
+      body: { permissions: { shortVideo: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -791,7 +791,7 @@ export const updateShortVideo = async (
     }
 
     const updated = await ShortVideo.findByIdAndUpdate(id, updates, {
-      new: true,
+      returnDocument: 'after',
     });
     return sendSuccess(res, 200, "Short video updated", updated);
   } catch (error) {
@@ -833,7 +833,7 @@ export const updateShortVideoProgress = async (
     const progress = await ShortVideoProgress.findOneAndUpdate(
       { userId: user.id, shortVideoId: id },
       { $max: { watchedSeconds: cappedWatched } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
 
     const finalWatched = progress.watchedSeconds;
@@ -919,7 +919,7 @@ export const createTag = async (
       return sendError(res, 401, "Unauthorized");
     }
     const canCreateTag = await auth.api.userHasPermission({
-      body: { permission: { tag: ["create"] } },
+      body: { permissions: { tag: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canCreateTag?.success) {
@@ -995,7 +995,7 @@ export const deactivateTag = async (
       return sendError(res, 401, "Unauthorized");
     }
     const canDeleteTag = await auth.api.userHasPermission({
-      body: { permission: { tag: ["delete"] } },
+      body: { permissions: { tag: ["delete"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canDeleteTag?.success) {
@@ -1019,7 +1019,7 @@ export const deactivateTag = async (
     const updated = await Tag.findByIdAndUpdate(
       id,
       { active: false, deletedAt: new Date() },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
 
     return sendSuccess(res, 200, "Tag deactivated", updated);
@@ -1043,7 +1043,7 @@ export const activateTag = async (
       return sendError(res, 401, "Unauthorized");
     }
     const canUpdateTag = await auth.api.userHasPermission({
-      body: { permission: { tag: ["update"] } },
+      body: { permissions: { tag: ["update"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canUpdateTag?.success) {
@@ -1066,7 +1066,7 @@ export const activateTag = async (
     const reactivated = await Tag.findByIdAndUpdate(
       id,
       { $set: { active: true }, $unset: { deletedAt: 1 } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean();
 
     return sendSuccess(res, 200, "Tag activated", reactivated);
@@ -1090,7 +1090,7 @@ export const deleteTag = async (
       return sendError(res, 401, "Unauthorized");
     }
     const canDeleteTag = await auth.api.userHasPermission({
-      body: { permission: { tag: ["delete"] } },
+      body: { permissions: { tag: ["delete"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canDeleteTag?.success) {
@@ -1131,7 +1131,7 @@ export const getAllShortVideoByUser = async (
     }
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { shortVideo: ["view"] } },
+      body: { permissions: { shortVideo: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {

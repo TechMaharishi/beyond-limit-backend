@@ -96,7 +96,7 @@ async function processPendingShortVideo(): Promise<boolean> {
       },
       $inc: { subtitle_retry_count: 1 },
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!video) return false; // nothing to process
@@ -167,7 +167,7 @@ async function processPendingCourseJob(): Promise<boolean> {
       },
       $inc: { subtitle_retry_count: 1 },
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!job) return false; // nothing to process

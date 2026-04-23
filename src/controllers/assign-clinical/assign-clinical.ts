@@ -20,7 +20,7 @@ export const assignTraineeToUser = async (
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
     const canUpdate = await auth.api.userHasPermission({
-      body: { permission: { trainee: ["update"] } },
+      body: { permissions: { trainee: ["update"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canUpdate?.success) {
@@ -187,7 +187,7 @@ export const unassignTraineeFromUser = async (
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
     const canUpdate = await auth.api.userHasPermission({
-      body: { permission: { trainee: ["update"] } },
+      body: { permissions: { trainee: ["update"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canUpdate?.success) {
@@ -274,7 +274,7 @@ export const getAssignedTraineeForUser = async (
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
     const canView = await auth.api.userHasPermission({
-      body: { permission: { trainee: ["view"] } },
+      body: { permissions: { trainee: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -323,7 +323,7 @@ export const getUsersAssignedToTrainee = async (
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
     const canView = await auth.api.userHasPermission({
-      body: { permission: { trainee: ["view"] } },
+      body: { permissions: { trainee: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {

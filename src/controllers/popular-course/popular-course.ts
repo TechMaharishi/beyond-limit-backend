@@ -35,7 +35,7 @@ export const getPopularCoursesAll = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { course: ["view"] } },
+      body: { permissions: { course: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");

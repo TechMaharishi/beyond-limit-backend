@@ -48,7 +48,7 @@ export const markNotificationRead = async (
     const updated = await Notification.findOneAndUpdate(
       { _id: id, userId: (user as any).id },
       { $set: { read: true } },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!updated) return sendError(res, 404, "Notification not found");
 

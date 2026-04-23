@@ -23,7 +23,7 @@ export const assignShort = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
-      body: { permission: { assignShorts: ["create"] } },
+      body: { permissions: { assignShorts: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canCreate?.success) {
@@ -179,7 +179,7 @@ export const unassignShort = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canDelete = await auth.api.userHasPermission({
-      body: { permission: { assignShorts: ["delete"] } },
+      body: { permissions: { assignShorts: ["delete"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canDelete?.success) {
@@ -248,7 +248,7 @@ export const getAssignedShortsForAssignee = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { assignShorts: ["view"] } },
+      body: { permissions: { assignShorts: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -499,7 +499,7 @@ export const assignShortsBulk = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
-      body: { permission: { assignShorts: ["create"] } },
+      body: { permissions: { assignShorts: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canCreate?.success) {

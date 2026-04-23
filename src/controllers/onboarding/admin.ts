@@ -27,7 +27,7 @@ export const CreateRolebaseUser = async (
     }
 
     const canCreate = await auth.api.userHasPermission({
-      body: { permission: { user: ["create"] } },
+      body: { permissions: { user: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
 
@@ -75,7 +75,7 @@ export const CreateRolebaseUser = async (
 export const ListUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const permission = await auth.api.userHasPermission({
-      body: { permission: { user: ["list"] } },
+      body: { permissions: { user: ["list"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!permission?.success) {
@@ -207,7 +207,7 @@ export const ListUser = async (req: Request, res: Response, next: NextFunction) 
 export const ListUserBadPagination = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const permission = await auth.api.userHasPermission({
-      body: { permission: { user: ["list"] } },
+      body: { permissions: { user: ["list"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!permission?.success) {
@@ -315,7 +315,7 @@ export const SetUserRole = async (
 ) => {
   try {
     const permission = await auth.api.userHasPermission({
-      body: { permission: { user: ["update"] } },
+      body: { permissions: { user: ["update"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!permission?.success) {
@@ -341,7 +341,7 @@ export const ResetUserPassword = async (
 ) => {
   try {
     const permission = await auth.api.userHasPermission({
-      body: { permission: { user: ["reset-password"] } },
+      body: { permissions: { user: ["reset-password"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!permission?.success) {
@@ -367,7 +367,7 @@ export const BanUser = async (
 ) => {
   try {
     const permission = await auth.api.userHasPermission({
-      body: { permission: { user: ["ban"] } },
+      body: { permissions: { user: ["ban"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!permission?.success) {
@@ -394,7 +394,7 @@ export const UnbanUser = async (
 ) => {
   try {
     const permission = await auth.api.userHasPermission({
-      body: { permission: { user: ["ban"] } },
+      body: { permissions: { user: ["ban"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!permission?.success) {
@@ -417,7 +417,7 @@ export const DeleteUser = async (
 ) => {
   try {
     const permission = await auth.api.userHasPermission({
-      body: { permission: { user: ["delete"] } },
+      body: { permissions: { user: ["delete"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!permission?.success) {
@@ -441,7 +441,7 @@ export const DeleteUsersBulk = async (
   try {
     const apiHeaders = fromNodeHeaders(req.headers);
     const permission = await auth.api.userHasPermission({
-      body: { permission: { user: ["delete"] } },
+      body: { permissions: { user: ["delete"] } },
       headers: apiHeaders,
     });
     if (!permission?.success) {
@@ -500,7 +500,7 @@ export const UpdateUser = async (
 ) => {
   try {
     const permission = await auth.api.userHasPermission({
-      body: { permission: { user: ["update"] } },
+      body: { permissions: { user: ["update"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!permission?.success) {

@@ -79,7 +79,7 @@ export const createSupportTicket = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
-      body: { permission: { ticket: ["create"] } },
+      body: { permissions: { ticket: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canCreate?.success) {
@@ -353,7 +353,7 @@ export const listSupportTickets = async (
 
     if (isAdmin) {
       const canView = await auth.api.userHasPermission({
-        body: { permission: { ticket: ["view"] } },
+        body: { permissions: { ticket: ["view"] } },
         headers: fromNodeHeaders(req.headers),
       });
       if (!canView?.success) {
@@ -443,7 +443,7 @@ export const getSupportTicket = async (
 
     if (!isOwner && !isAdmin) {
       const canView = await auth.api.userHasPermission({
-        body: { permission: { ticket: ["view"] } },
+        body: { permissions: { ticket: ["view"] } },
         headers: fromNodeHeaders(req.headers),
       });
       if (!canView?.success) {
@@ -471,7 +471,7 @@ export const resolveSupportTicket = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canUpdate = await auth.api.userHasPermission({
-      body: { permission: { ticket: ["resolve"] } },
+      body: { permissions: { ticket: ["resolve"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canUpdate?.success) {
@@ -491,7 +491,7 @@ export const resolveSupportTicket = async (
         resolvedAt: new Date(),
         expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Expire in 30 days
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!ticket) return sendError(res, 404, "Ticket not found");

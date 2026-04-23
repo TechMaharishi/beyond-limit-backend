@@ -1,5 +1,10 @@
 import mongoose from 'mongoose';
 import logger from '@/utils/logger';
+import dns from 'node:dns';
+
+// Override the default DNS resolver for this process to use public Google/Cloudflare DNS.
+// This fixes the "querySrv ECONNREFUSED" error on ISPs or routers that block SRV queries.
+dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 mongoose.connection.on('connected', () => {
   logger.info('MongoDB connected successfully');

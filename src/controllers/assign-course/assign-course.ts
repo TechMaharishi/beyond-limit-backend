@@ -43,7 +43,7 @@ export const assignCourse = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
-      body: { permission: { assignCourse: ["create"] } },
+      body: { permissions: { assignCourse: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canCreate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -186,7 +186,7 @@ export const unassignCourse = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canDelete = await auth.api.userHasPermission({
-      body: { permission: { assignCourse: ["delete"] } },
+      body: { permissions: { assignCourse: ["delete"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canDelete?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -240,7 +240,7 @@ export const getAssignedCoursesForAssignee = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { assignCourse: ["view"] } },
+      body: { permissions: { assignCourse: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -392,7 +392,7 @@ export const getMyAssignedCourses = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { assignCourse: ["view"] } },
+      body: { permissions: { assignCourse: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -554,7 +554,7 @@ export const assignCourseBulk = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
-      body: { permission: { assignCourse: ["create"] } },
+      body: { permissions: { assignCourse: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canCreate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");

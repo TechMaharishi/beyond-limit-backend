@@ -97,7 +97,7 @@ async function sendMailSafe(msg: any) {
 export interface SendEmailOTPVerificationArgs {
   email: string;
   otp: string;
-  type?: "sign-in" | "email-verification" | "forget-password";
+  type?: "sign-in" | "email-verification" | "forget-password" | "change-email";
   firstName?: string;
 }
 

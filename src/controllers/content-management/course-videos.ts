@@ -148,7 +148,7 @@ export const uploadLessonVideo = async (
     }
 
     const canUpload = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canUpload?.success) {
@@ -203,7 +203,7 @@ export const createCourseBasic = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canCreate?.success)
@@ -410,7 +410,7 @@ export const updateCourse = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canEdit?.success)
@@ -600,7 +600,7 @@ export const addChapterToCourse = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canEdit?.success)
@@ -659,7 +659,7 @@ export const deleteChapter = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canEdit?.success)
@@ -743,7 +743,7 @@ export const addLessonToChapter = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canEdit?.success)
@@ -866,7 +866,7 @@ export const addQuizToChapter = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canEdit?.success)
@@ -1003,7 +1003,7 @@ export const deleteQuizFromChapter = async (
       return sendError(res, 401, "Unauthorized");
     }
     const canEdit = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canEdit?.success) {
@@ -1061,7 +1061,7 @@ export const submitQuizResponses = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { course: ["view"] } },
+      body: { permissions: { course: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -1155,7 +1155,7 @@ export const uploadCourseResources = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canEdit?.success)
@@ -1259,7 +1259,7 @@ export const deleteCourseResource = async (
     }
 
     const canEdit = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canEdit?.success) {
@@ -1460,7 +1460,7 @@ export const getAllCourses = async (
     }
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { courseVideoStatus: ["view"] } },
+      body: { permissions: { courseVideoStatus: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -1652,7 +1652,7 @@ export const getCourse = async (
     }
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { course: ["view"] } },
+      body: { permissions: { course: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -1871,7 +1871,7 @@ export const deleteLessonVideo = async (
     }
 
     const canEdit = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canEdit?.success) {
@@ -1956,7 +1956,7 @@ export const deleteLessonFromChapter = async (
       return sendError(res, 401, "Unauthorized");
     }
     const canEdit = await auth.api.userHasPermission({
-      body: { permission: { course: ["create"] } },
+      body: { permissions: { course: ["create"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canEdit?.success) {
@@ -2118,7 +2118,7 @@ export const getCourseWithProgress = async (
     }
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { course: ["view"] } },
+      body: { permissions: { course: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -2336,7 +2336,7 @@ export const getAllCoursesByUser = async (
     }
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { course: ["view"] } },
+      body: { permissions: { course: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -2561,7 +2561,7 @@ export const getCompletedCoursesByUser = async (
     }
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { course: ["view"] } },
+      body: { permissions: { course: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -2711,7 +2711,7 @@ export const saveCourseForUser = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { course: ["view"] } },
+      body: { permissions: { course: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -2767,7 +2767,7 @@ export const getSavedCoursesByUser = async (
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
-      body: { permission: { course: ["view"] } },
+      body: { permissions: { course: ["view"] } },
       headers: fromNodeHeaders(req.headers),
     });
     if (!canView?.success) {
@@ -2916,7 +2916,7 @@ export const changeCourseStatus = async (
       update.rejectReason = "";
     }
 
-    const updated = await Course.findByIdAndUpdate(id, update, { new: true });
+    const updated = await Course.findByIdAndUpdate(id, update, { returnDocument: 'after' });
     if (!updated) {
       return sendError(res, 404, "Course not found");
     }

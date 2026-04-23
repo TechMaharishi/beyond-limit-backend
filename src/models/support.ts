@@ -32,6 +32,8 @@ export interface ISupportTicket {
   resolvedAt?: Date | null;
   expireAt?: Date | null;
   resolutionMsg?: string;
+  slackChannelId?: string;
+  slackMessageTs?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -72,6 +74,8 @@ const SupportTicketSchema = new Schema(
     // TTL target date: only set when ticket is resolved
     expireAt: { type: Date, default: null },
     resolutionMsg: { type: String, default: "" },
+    slackChannelId: { type: String, default: "" },
+    slackMessageTs: { type: String, default: "" },
   },
   { timestamps: true }
 );
