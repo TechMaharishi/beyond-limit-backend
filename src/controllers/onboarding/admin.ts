@@ -1,0 +1,520 @@
+import { NextFunction, Request, Response } from "express";
+import { auth } from "@/lib/auth";
+import { fromNodeHeaders } from "better-auth/node";
+import { sendAccountCredentialsEmail } from "@/utils/mailer";
+import { subscribeEmailToMailchimpSafe } from "@/utils/mailchimp";
+import { ClinicalAssignment } from "@/models/clinical-assignment";
+
+
+// Role-based user creation endpoint
+export const CreateRolebaseUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const role = req.body.role as string;
+
+    if (["admin", "trainer", "trainee", "user"].includes(role) === false) {
+      return res.status(400).json({ message: "Invalid role" });
+    }
+
+    const session = await auth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!session || !session.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const canCreate = await auth.api.userHasPermission({
+      body: { permission: { user: ["create"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+
+    if (!canCreate?.success) return res.status(403).json({ message: "Forbidden" });    
+
+    const rawAccountType = String((req.body?.accountType ?? "")).toLowerCase().trim();
+    const allowedAccountTypes = ["free", "develop", "master"];
+    const accountType = rawAccountType && allowedAccountTypes.includes(rawAccountType) ? rawAccountType : "free";
+    const phone = typeof (req.body as any)?.phone === "string" ? (req.body as any).phone : undefined;
+    const rawNewsletter = (req.body as any)?.newsletter;
+    const newsletter = String(rawNewsletter).toLowerCase() === "true" || rawNewsletter === true;
+    const newUser = await auth.api.createUser({
+      body: {
+        email: req.body.email,
+        password: req.body.password,
+        name: req.body.name,
+        role: req.body.role,
+        data: { accountType, phone, newsletter },
+      },
+    });
+
+    await sendAccountCredentialsEmail({
+      to: req.body.email,
+      username: req.body.email,
+      password: req.body.password,
+      firstName: typeof req.body.name === "string" ? String(req.body.name).split(/\s+/)[0] : undefined,
+    });
+
+    if (newsletter && typeof req.body.email === "string") {
+      const name = typeof req.body.name === "string" ? req.body.name : undefined;
+      await subscribeEmailToMailchimpSafe({
+        email: String(req.body.email),
+        name,
+        tags: ["mobile-application"],
+      });
+    }
+
+    return res.status(201).json({ data: newUser });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// Query params: role=admin|trainer|trainee|user, search=string, field=name|email, page=number, limit=number
+export const ListUser = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const permission = await auth.api.userHasPermission({
+      body: { permission: { user: ["list"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!permission?.success) {
+      return res.status(403).json({ error: "Not allowed to list users" });
+    }
+
+    const role = (req.query.role as string) || "";
+    const search = (req.query.search as string) || "";
+    const field = (req.query.field as string) || "name";
+    const sortBy = (req.query.sortBy as string) || "createdAt";
+    const sortDirection = (req.query.sortDirection as string) || "asc";
+
+    // Validate role and field
+    const allowedRoles = ["admin", "trainer", "trainee", "user"];
+    const allowedFields = ["email", "name"];
+    const allowedSortFields = ["createdAt", "updatedAt", "name", "email"];
+    const allowedSortDirections = ["asc", "desc"];
+
+    if (role && !allowedRoles.includes(role)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
+    if (!allowedFields.includes(field)) {
+      return res.status(400).json({ error: "Invalid search field" });
+    }
+    if (!allowedSortFields.includes(sortBy)) {
+      return res.status(400).json({ error: "Invalid sort field" });
+    }
+    if (!allowedSortDirections.includes(sortDirection)) {
+      return res.status(400).json({ error: "Invalid sort direction" });
+    }
+
+    // Pagination bounds and validation
+    const rawPage = Number(req.query.page);
+    const rawLimit = Number(req.query.limit);
+    const page = !isNaN(rawPage) && rawPage > 0 ? rawPage : 1;
+    const limit = !isNaN(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 10; // Max 100 per page
+    const offset = (page - 1) * limit;
+
+    // Page data
+    const pageResult = await auth.api.listUsers({
+      query: {
+        searchValue: search || undefined,
+        searchField: field as "email" | "name",
+        filterField: role ? "role" : undefined,
+        filterValue: role || undefined,
+        limit,
+        offset,
+        sortBy: sortBy as any,
+        sortDirection: sortDirection as "asc" | "desc",
+        searchOperator: "contains",
+      },
+      headers: fromNodeHeaders(req.headers),
+    });
+
+    // Better Auth Admin API returns an object: { users, total, limit, offset }
+    const { users, total, limit: appliedLimit, offset: appliedOffset } = pageResult as {
+      users: any[];
+      total: number;
+      limit?: number;
+      offset?: number;
+    };
+
+    const finalLimit = appliedLimit ?? limit;
+    const finalOffset = appliedOffset ?? offset;
+    const totalPages = Math.ceil(total / finalLimit);
+    const hasNext = page < totalPages;
+    const hasPrev = page > 1;
+
+    const idsForAssignments = (users || [])
+      .filter((u: any) => {
+        const r = (u as any).role;
+        return Array.isArray(r) ? r.includes("user") : r === "user";
+      })
+      .map((u: any) => String(u.id));
+
+    let assignmentMap: Record<string, { name: string | null; email: string | null; id: string | null }> = {};
+    if (idsForAssignments.length > 0) {
+      const assignments = await ClinicalAssignment.find({ userId: { $in: idsForAssignments } }).lean();
+      assignmentMap = Object.fromEntries(
+        (assignments || []).map((a: any) => [
+          String(a.userId),
+          {
+            name: a.traineeName ?? null,
+            email: a.traineeEmail ?? null,
+            id: a.traineeId ?? null,
+          },
+        ])
+      );
+    }
+
+    return res.status(200).json({
+      data: {
+        users: (users || []).map((u: any) => {
+          const isUser = Array.isArray((u as any).role) ? (u as any).role.includes("user") : (u as any).role === "user";
+          const assignment = isUser ? assignmentMap[String(u.id)] : null;
+
+          return {
+            name: u.name,
+            email: u.email,
+            emailVerified: Boolean(u.emailVerified),
+            createdAt: u.createdAt,
+            updatedAt: u.updatedAt,
+            role: (u as any).role,
+            banned: Boolean(u.banned),
+            phone: (u as any).phone,
+            accountType: (u as any).accountType,
+            id: u.id,
+            traineeName: assignment?.name ?? null,
+            traineeEmail: assignment?.email ?? null,
+            traineeId: assignment?.id ?? null,
+          };
+        }),
+        meta: {
+          page,
+          offset: finalOffset,
+          limit: finalLimit,
+          total,
+          totalPages,
+          hasNext,
+          hasPrev,
+        },
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const ListUserBadPagination = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const permission = await auth.api.userHasPermission({
+      body: { permission: { user: ["list"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!permission?.success) {
+      return res.status(403).json({ error: "Not allowed to list users" });
+    }
+
+    const role = (req.query.role as string) || "";
+    const search = (req.query.search as string) || "";
+    const field = (req.query.field as string) || "name";
+    const sortBy = (req.query.sortBy as string) || "createdAt";
+    const sortDirection = (req.query.sortDirection as string) || "asc";
+    const page = req.query.page ? Number(req.query.page) : 1;
+    const limit = req.query.limit ? Number(req.query.limit) : 10;
+    const offset = (page - 1) * limit;
+
+    // Validate role and field
+    const allowedRoles = ["admin", "trainer", "trainee", "user"];
+    const allowedFields = ["email", "name"];
+    const allowedSortFields = ["createdAt", "updatedAt", "name", "email"];
+    const allowedSortDirections = ["asc", "desc"];
+
+    if (role && !allowedRoles.includes(role)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
+    if (!allowedFields.includes(field)) {
+      return res.status(400).json({ error: "Invalid search field" });
+    }
+    if (!allowedSortFields.includes(sortBy)) {
+      return res.status(400).json({ error: "Invalid sort field" });
+    }
+    if (!allowedSortDirections.includes(sortDirection)) {
+      return res.status(400).json({ error: "Invalid sort direction" });
+    }
+
+    // Page data
+    const pageResult = await auth.api.listUsers({
+      query: {
+        searchValue: search || undefined,
+        searchField: field as "email" | "name",
+        filterField: role ? "role" : undefined,
+        filterValue: role || undefined,
+        limit,
+        offset,
+        sortBy: sortBy as any,
+        sortDirection: sortDirection as "asc" | "desc",
+        searchOperator: "contains",
+      },
+      headers: fromNodeHeaders(req.headers),
+    });
+
+    // Better Auth Admin API returns an object: { users, total, limit, offset }
+    const { users, total, limit: appliedLimit } = pageResult as {
+      users: any[];
+      total: number;
+      limit?: number;
+      offset?: number;
+    };
+
+    const idsForAssignments = (users || [])
+      .filter((u: any) => {
+        const r = (u as any).role;
+        return Array.isArray(r) ? r.includes("user") : r === "user";
+      })
+      .map((u: any) => String(u.id));
+
+    let assignmentMap: Record<string, string | null> = {};
+    if (idsForAssignments.length > 0) {
+      const assignments = await ClinicalAssignment.find({ userId: { $in: idsForAssignments } }).lean();
+      assignmentMap = Object.fromEntries(
+        (assignments || []).map((a: any) => [String(a.userId), a.traineeName ?? null])
+      );
+    }
+
+    return res.status(200).json({
+      data: {
+        users: (users || []).map((u: any) => ({
+          name: u.name,
+          email: u.email,
+          emailVerified: Boolean(u.emailVerified),
+          createdAt: u.createdAt,
+          updatedAt: u.updatedAt,
+          role: (u as any).role,
+          banned: Boolean(u.banned),
+          phone: (u as any).phone,
+          accountType: (u as any).accountType,
+          id: u.id,
+          traineeName:
+            (Array.isArray((u as any).role) ? (u as any).role.includes("user") : (u as any).role === "user")
+              ? assignmentMap[String(u.id)] ?? null
+              : null,
+        })),
+        total,
+        limit: appliedLimit ?? limit,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const SetUserRole = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const permission = await auth.api.userHasPermission({
+      body: { permission: { user: ["update"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!permission?.success) {
+      return res.status(403).json({ error: "Not allowed to set user role" });
+    }
+    const data = await auth.api.setRole({
+      body: {
+        userId: req.body.userId,
+        role: req.body.role,
+      },
+      headers: fromNodeHeaders(req.headers),
+    });
+    return res.status(200).json({ data });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const ResetUserPassword = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const permission = await auth.api.userHasPermission({
+      body: { permission: { user: ["reset-password"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!permission?.success) {
+      return res.status(403).json({ error: "Not allowed to reset user password" });
+    }
+    const data = await auth.api.setUserPassword({
+      body: {
+        newPassword: req.body.newPassword,
+        userId: req.body.userId,
+      },
+      headers: fromNodeHeaders(req.headers),
+    });
+    return res.status(200).json({ data });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const BanUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const permission = await auth.api.userHasPermission({
+      body: { permission: { user: ["ban"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!permission?.success) {
+      return res.status(403).json({ error: "Not allowed to ban users" });
+    }
+    const data = await auth.api.banUser({
+      body: {
+        userId: req.body.userId,
+        banReason: req.body.banReason,
+        banExpiresIn: req.body.banExpiresIn,
+      },
+      headers: fromNodeHeaders(req.headers),
+    });
+    return res.status(200).json({ data });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const UnbanUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const permission = await auth.api.userHasPermission({
+      body: { permission: { user: ["ban"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!permission?.success) {
+      return res.status(403).json({ error: "Not allowed to unban users" });
+    }
+    const data = await auth.api.unbanUser({
+      body: { userId: req.body.userId },
+      headers: fromNodeHeaders(req.headers),
+    });
+    return res.status(200).json({ data });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const DeleteUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const permission = await auth.api.userHasPermission({
+      body: { permission: { user: ["delete"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!permission?.success) {
+      return res.status(403).json({ error: "Not allowed to delete users" });
+    }
+    const data = await auth.api.removeUser({
+      body: { userId: req.body.userId },
+      headers: fromNodeHeaders(req.headers),
+    });
+    return res.status(200).json({ data });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const DeleteUsersBulk = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const permission = await auth.api.userHasPermission({
+      body: { permission: { user: ["delete"] } },
+      headers: apiHeaders,
+    });
+    if (!permission?.success) {
+      return res.status(403).json({ error: "Not allowed to delete users" });
+    }
+    const ids = Array.isArray((req.body as any)?.userIds)
+      ? (req.body as any).userIds
+      : [];
+    const userIds = ids
+      .map((x: any) => String(x || "").trim())
+      .filter((x: string) => x.length > 0);
+    if (userIds.length === 0) {
+      return res.status(400).json({ error: "userIds array is required" });
+    }
+    const uniqueIds: string[] = Array.from(new Set(userIds));
+    const maxBatch = 100;
+    if (uniqueIds.length > maxBatch) {
+      return res.status(400).json({ error: `Too many userIds, max ${maxBatch}` });
+    }
+    const success: string[] = [];
+    const failed: Array<{ userId: string; error: string }> = [];
+    const concurrency = 10;
+    for (let i = 0; i < uniqueIds.length; i += concurrency) {
+      const slice = uniqueIds.slice(i, i + concurrency);
+      const chunk = await Promise.allSettled(
+        slice.map((userId) =>
+          auth.api.removeUser({
+            body: { userId },
+            headers: apiHeaders,
+          })
+        )
+      );
+      chunk.forEach((r, idx) => {
+        const id = slice[idx];
+        if (r.status === "fulfilled") {
+          success.push(id);
+        } else {
+          const msg =
+            r.reason instanceof Error
+              ? r.reason.message
+              : String(r.reason || "Unknown error");
+          failed.push({ userId: id, error: msg });
+        }
+      });
+    }
+    return res.status(200).json({ data: { success, failed } });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const UpdateUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const permission = await auth.api.userHasPermission({
+      body: { permission: { user: ["update"] } },
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!permission?.success) {
+      return res.status(403).json({ error: "Not allowed to update users" });
+    }
+    const data = await auth.api.adminUpdateUser({
+      body: {
+        userId: req.body.userId,
+        data: req.body.data,
+      },
+      headers: fromNodeHeaders(req.headers),
+    });
+    return res.status(200).json({ data });
+  } catch (error) {
+    return next(error);
+  }
+};
