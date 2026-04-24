@@ -6,7 +6,9 @@ import { MongoClient } from "mongodb";
 import {
   sendPasswordResetSuccessEmail,
   sendEmailOTPVerification,
+  sendWelcomeEmail,
 } from "@/utils/mailer";
+import { subscribeEmailToMailchimpSafe } from "@/utils/mailchimp";
 import { ac, admin, trainee, trainer, user } from "@/lib/permission";
 import { bearer } from "better-auth/plugins";
 import { APIError } from "better-auth/api";
@@ -136,11 +138,27 @@ export const auth = betterAuth({
             const { Profile } = await import("@/models/profile");
             await Profile.findOneAndUpdate(
               { userId: user.id, isDefault: true },
-              { $setOnInsert: { userId: user.id, name: "My Profile", avatar: "", isDefault: true } },
+              { $setOnInsert: { userId: user.id, name: "Profile 1", avatar: "", isDefault: true } },
               { upsert: true }
             );
           } catch (err) {
             console.error("[databaseHooks] Failed to auto-create profile:", err);
+          }
+
+          // Welcome Email & Mailchimp integration
+          try {
+            const firstName = user.name ? user.name.trim() : undefined;
+            await sendWelcomeEmail({ to: user.email, firstName });
+            
+            if ((user as any).newsletter) {
+              await subscribeEmailToMailchimpSafe({
+                email: user.email,
+                name: firstName,
+                tags: ["mobile-application"],
+              });
+            }
+          } catch (err) {
+            console.error("[databaseHooks] Failed to send welcome email/mailchimp:", err);
           }
         },
       },

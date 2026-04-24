@@ -11,7 +11,8 @@ export const SignupUser = async (req: Request, res: Response, next: NextFunction
   try {
     const rawNewsletter = (req.body as any)?.newsletter;
     const newsletter = String(rawNewsletter).toLowerCase() === "true" || rawNewsletter === true;
-    const data = await auth.api.signUpEmail({
+    
+    const response = await auth.api.signUpEmail({
       body: {
         name: req.body.name,
         email: req.body.email,
@@ -19,19 +20,23 @@ export const SignupUser = async (req: Request, res: Response, next: NextFunction
         newsletter,
         accountType: "free",
         rememberMe: req.body.rememberMe,
-      }
+      },
+      headers: fromNodeHeaders(req.headers),
+      asResponse: true,
     });
-    const firstName = typeof req.body.name === "string" ? req.body.name.trim() : undefined;
-    await sendWelcomeEmail({ to: req.body.email, firstName });
-    if (newsletter && typeof req.body.email === "string") {
-      const name = typeof req.body.name === "string" ? req.body.name : undefined;
-      await subscribeEmailToMailchimpSafe({
-        email: String(req.body.email),
-        name,
-        tags: ["mobile-application"],
-      });
+
+    response.headers.forEach((value, key) => {
+      res.append(key, value);
+    });
+
+    const data = await response.json();
+    
+    // Better Auth error responses have status >= 400
+    if (!response.ok) {
+      return res.status(response.status).json(data);
     }
-    return res.status(200).json({ data });
+
+    return res.status(response.status).json({ data });
   } catch (error) {
     return next(error);
   }
@@ -67,14 +72,27 @@ export const VerifyEmailOTP = async (req: Request, res: Response, next: NextFunc
 
 export const SigninUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.signInEmail({
+    const response = await auth.api.signInEmail({
       body: {
         email: req.body.email,
         password: req.body.password,
+        rememberMe: req.body.rememberMe,
       },
       headers: fromNodeHeaders(req.headers),
+      asResponse: true,
     });
-    return res.status(200).json({ session });
+
+    response.headers.forEach((value, key) => {
+      res.append(key, value);
+    });
+
+    const session = await response.json();
+    
+    if (!response.ok) {
+      return res.status(response.status).json(session);
+    }
+
+    return res.status(response.status).json({ session });
   } catch (error) {
     return next(error);
   }
