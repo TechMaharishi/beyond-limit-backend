@@ -11,7 +11,7 @@ export const SignupUser = async (req: Request, res: Response, next: NextFunction
   try {
     const rawNewsletter = (req.body as any)?.newsletter;
     const newsletter = String(rawNewsletter).toLowerCase() === "true" || rawNewsletter === true;
-    
+
     const response = await auth.api.signUpEmail({
       body: {
         name: req.body.name,
@@ -30,8 +30,7 @@ export const SignupUser = async (req: Request, res: Response, next: NextFunction
     });
 
     const data = await response.json();
-    
-    // Better Auth error responses have status >= 400
+
     if (!response.ok) {
       return res.status(response.status).json(data);
     }
@@ -40,7 +39,7 @@ export const SignupUser = async (req: Request, res: Response, next: NextFunction
   } catch (error) {
     return next(error);
   }
-}
+};
 
 export const SendVerificationOTP = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -48,13 +47,14 @@ export const SendVerificationOTP = async (req: Request, res: Response, next: Nex
       body: {
         email: req.body.email,
         type: "email-verification",
-      }
+      },
+      headers: fromNodeHeaders(req.headers),
     });
     return res.status(200).json({ data });
   } catch (error) {
     return next(error);
   }
-}
+};
 
 export const VerifyEmailOTP = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -63,12 +63,13 @@ export const VerifyEmailOTP = async (req: Request, res: Response, next: NextFunc
         email: req.body.email,
         otp: req.body.otp,
       },
+      headers: fromNodeHeaders(req.headers),
     });
     return res.status(200).json({ data });
   } catch (error) {
     return next(error);
   }
-}
+};
 
 export const SigninUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -87,7 +88,7 @@ export const SigninUser = async (req: Request, res: Response, next: NextFunction
     });
 
     const session = await response.json();
-    
+
     if (!response.ok) {
       return res.status(response.status).json(session);
     }
@@ -96,7 +97,7 @@ export const SigninUser = async (req: Request, res: Response, next: NextFunction
   } catch (error) {
     return next(error);
   }
-}
+};
 
 export const SignoutUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -107,7 +108,7 @@ export const SignoutUser = async (req: Request, res: Response, next: NextFunctio
   } catch (error) {
     return next(error);
   }
-}
+};
 
 export const ForgetPasswordEmailOTP = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -115,12 +116,13 @@ export const ForgetPasswordEmailOTP = async (req: Request, res: Response, next: 
       body: {
         email: req.body.email,
       },
+      headers: fromNodeHeaders(req.headers),
     });
     return res.status(200).json({ data });
   } catch (error) {
     return next(error);
   }
-}
+};
 
 export const CheckForgetPasswordEmailOTP = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -130,12 +132,13 @@ export const CheckForgetPasswordEmailOTP = async (req: Request, res: Response, n
         type: "forget-password",
         otp: req.body.otp,
       },
+      headers: fromNodeHeaders(req.headers),
     });
     return res.status(200).json({ data });
   } catch (error) {
     return next(error);
   }
-}
+};
 
 export const ChangeForgetPasswordEmailOTP = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -145,12 +148,13 @@ export const ChangeForgetPasswordEmailOTP = async (req: Request, res: Response, 
         otp: req.body.otp,
         password: req.body.password,
       },
+      headers: fromNodeHeaders(req.headers),
     });
     return res.status(200).json({ data });
   } catch (error) {
     return next(error);
   }
-}
+};
 
 export const UpdatePasswordUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -166,40 +170,38 @@ export const UpdatePasswordUser = async (req: Request, res: Response, next: Next
   } catch (error) {
     return next(error);
   }
-}
+};
 
 export async function getMe(req: Request, res: Response, next: NextFunction) {
   try {
     const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers)
+      headers: fromNodeHeaders(req.headers),
     });
     if (!session || !session.user) {
       return res.status(401).json({ error: "Not authenticated" });
     }
     const user = session.user;
-    const userDetails = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      phone: (user as any).phone,
-      image: (user as any).image,
-      role: (user as any).role,
-      emailVerified: user.emailVerified ?? null,
-    };
-
-    return res.status(200).json({ data: userDetails });
+    return res.status(200).json({
+      data: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: (user as any).phone,
+        image: (user as any).image,
+        role: (user as any).role,
+        emailVerified: user.emailVerified ?? null,
+      },
+    });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 }
 
 export const DeleteUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    // const callbackURL = `${process.env.BETTER_AUTH_URL}/confirm-account-delete`;
     const data = await auth.api.deleteUser({
       body: {
         password: req.body.password,
-        // callbackURL,
       },
       headers: fromNodeHeaders(req.headers),
     });
@@ -207,14 +209,13 @@ export const DeleteUser = async (req: Request, res: Response, next: NextFunction
   } catch (error) {
     return next(error);
   }
-} 
+};
 
-// Update current user's account info: name, phone
 export const UpdateAccountInfo = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return res.status(401).json({ error: "Not authenticated" });
 
@@ -225,7 +226,6 @@ export const UpdateAccountInfo = async (req: Request, res: Response, next: NextF
       return res.status(400).json({ error: "No fields to update" });
     }
 
-    // Basic phone validation: optional '+' followed by 7–15 digits
     if (phone !== undefined && phone.length > 0) {
       const phoneRegex = /^\+?[0-9]{7,15}$/;
       if (!phoneRegex.test(phone)) {
@@ -239,16 +239,9 @@ export const UpdateAccountInfo = async (req: Request, res: Response, next: NextF
     if (name !== undefined) payload.name = name;
     if (phone !== undefined) payload.phone = phone;
 
-    if (Object.keys(payload).length > 0) {
-      await auth.api.updateUser({
-        body: payload,
-        headers: fromNodeHeaders(req.headers),
-      });
-    }
+    await auth.api.updateUser({ body: payload, headers: apiHeaders });
 
-    const refreshed = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const refreshed = await auth.api.getSession({ headers: apiHeaders });
     const latest = refreshed?.user ?? user;
 
     return res.status(200).json({
@@ -260,17 +253,15 @@ export const UpdateAccountInfo = async (req: Request, res: Response, next: NextF
       },
     });
   } catch (error) {
-    next(error);
-    return res.status(500).json({ error });
+    return next(error);
   }
 };
 
-// Upload profile photo to cloudinary and update user.image
 export const UploadProfilePhoto = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return res.status(401).json({ error: "Not authenticated" });
 
@@ -303,7 +294,7 @@ export const UploadProfilePhoto = async (req: Request, res: Response, next: Next
 
     await auth.api.updateUser({
       body: { image: imageUrl },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
 
     return res.status(200).json({
@@ -316,32 +307,28 @@ export const UploadProfilePhoto = async (req: Request, res: Response, next: Next
       },
     });
   } catch (error) {
-    next(error);
-    return res.status(500).json({ error });
+    return next(error);
   }
 };
 
-// Remove profile photo from Cloudinary and clear user.image
 export const RemoveProfilePhoto = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return res.status(401).json({ error: "Not authenticated" });
 
     const publicId = `profiles/${String((user as any).id)}`;
 
-    // Attempt to delete the image from Cloudinary (ignore not found)
     await cloudinary.uploader.destroy(publicId, {
       invalidate: true,
       resource_type: "image",
     });
 
-    // Clear image in Better Auth user profile
     await auth.api.updateUser({
       body: { image: "" },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
 
     return res.status(200).json({
@@ -351,11 +338,6 @@ export const RemoveProfilePhoto = async (req: Request, res: Response, next: Next
       },
     });
   } catch (error) {
-    next(error);
-    return res.status(500).json({ error });
+    return next(error);
   }
 };
-
-
-
-
