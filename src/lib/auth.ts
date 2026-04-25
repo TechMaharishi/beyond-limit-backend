@@ -1,7 +1,9 @@
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
-import { admin as adminPlugin } from "better-auth/plugins";
-import { jwt } from "better-auth/plugins";
+import { admin as adminPlugin } from "better-auth/plugins/admin";
+import { jwt } from "better-auth/plugins/jwt";
+import { bearer } from "better-auth/plugins/bearer";
+import { emailOTP } from "better-auth/plugins/email-otp";
 import { MongoClient } from "mongodb";
 import {
   sendPasswordResetSuccessEmail,
@@ -10,15 +12,15 @@ import {
 } from "@/utils/mailer";
 import { subscribeEmailToMailchimpSafe } from "@/utils/mailchimp";
 import { ac, admin, trainee, trainer, user } from "@/lib/permission";
-import { bearer } from "better-auth/plugins";
 import { APIError } from "better-auth/api";
-import { emailOTP } from "better-auth/plugins"
 import { expo } from "@better-auth/expo";
 
 const ADMIN_USER_IDS = [
   "6937c1b95bba673ea5f36c10",
   "6969abe3235b3222d9f6ef85",
   "698d0339f9cc18108d4b4f98",
+  "69ea8ad06f8ba4f6a0f6bf28",
+  "69eb5c940aa790419e2d490a"
 ];
 
 const uri = process.env.MONGO_URI;
