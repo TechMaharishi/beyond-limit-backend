@@ -19,7 +19,10 @@ import deviceTokenRouter from "@/routes/notifications/device-tokens";
 import notificationsRouter from "@/routes/notifications/notifications";
 import assignShortsRouter from "@/routes/assign-shorts/assign-shorts";
 import cloudinaryWebhookRouter from "@/routes/webhooks/cloudinary";
+import cloudinaryUploadV1Router from "@/routes/webhooks/cloudinary-upload-v1";
 import profilesRouter from "@/routes/user/profiles";
+import shortVideosV1Router from "@/routes/content-management/short-videos-v1";
+import tagsRouter from "@/routes/tags/tags";
 
 
 
@@ -76,6 +79,10 @@ function registerRouters(app: Application) {
   app.use("/api", notificationsRouter);
   // Cloudinary webhook for caption transcription notifications
   app.use("/api", cloudinaryWebhookRouter);
+  // V1 — two-phase upload flow (signed URL + upload webhook + publish)
+  app.use("/api", shortVideosV1Router);
+  app.use("/api", cloudinaryUploadV1Router);
+  app.use("/api", tagsRouter);
 }
 
 registerRouters(app);
