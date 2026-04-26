@@ -34,8 +34,9 @@ function verifyCloudinarySignature(req: Request): boolean {
 
     if (!signature || !timestamp) return false;
 
+    const rawBody = (req as any).rawBody ?? JSON.stringify(req.body);
     const isValid = cloudinary.utils.verifyNotificationSignature(
-      JSON.stringify(req.body),
+      rawBody,
       Number(timestamp),
       signature
     );

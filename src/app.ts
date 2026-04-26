@@ -32,7 +32,11 @@ const app: Application = express();
 // Trust proxy so Express honors X-Forwarded-For from the hosting proxy
 // app.set('trust proxy', 1);
 
-app.use(express.json());
+app.use(express.json({
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf.toString("utf8");
+  },
+}));
 // app.use(helmet());
 
 const clientOrigin1 = process.env.CLIENT_ORIGIN1;

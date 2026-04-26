@@ -28,8 +28,13 @@ function verifyCloudinarySignature(req: Request): boolean {
     const timestamp = req.headers["x-cld-timestamp"] as string;
     if (!signature || !timestamp) return false;
 
+    // Use the raw body string captured before express.json() parsed it.
+    // JSON.stringify(req.body) can differ in key order/whitespace from what
+    // Cloudinary actually signed, causing HMAC mismatches.
+    const rawBody = (req as any).rawBody ?? JSON.stringify(req.body);
+
     return !!cloudinary.utils.verifyNotificationSignature(
-      JSON.stringify(req.body),
+      rawBody,
       Number(timestamp),
       signature
     );
