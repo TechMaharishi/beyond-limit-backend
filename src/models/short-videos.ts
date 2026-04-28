@@ -143,6 +143,12 @@ const ShortVideoSchema = new Schema<IShortVideo>(
 // Text index for efficient title/description search
 ShortVideoSchema.index({ title: "text", description: "text" });
 
+// Compound index for the published-videos listing query (status + visibility + createdAt)
+ShortVideoSchema.index({ status: 1, visibility: 1, createdAt: -1 });
+
+// Compound index for the management listing query (user + status)
+ShortVideoSchema.index({ user: 1, status: 1, createdAt: -1 });
+
 export const ShortVideo = mongoose.model<IShortVideo>(
   "ShortVideo",
   ShortVideoSchema,

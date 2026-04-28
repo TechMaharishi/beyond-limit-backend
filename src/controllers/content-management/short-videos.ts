@@ -910,9 +910,44 @@ export const listPublishedShortVideos = async (req: Request, res: Response, next
     }
 
     const total = await ShortVideo.countDocuments(filter);
-    const data = await ShortVideo.find(filter)
+    const videos = await ShortVideo.find(filter)
       .select("title description tags status thumbnailUrl accessLevel visibility durationSeconds createdAt updatedAt createdBy")
-      .sort(sort).skip(offset).limit(limit);
+      .sort(sort).skip(offset).limit(limit)
+      .lean();
+
+    // Resolve tracking ID — User role uses activeProfileId, others use user.id
+    // If no profile is selected for User role, progress defaults to 0 (don't block the listing)
+    const { id: trackingId } = resolveProgressTrackingId(user, session);
+
+    const videoIds = videos.map((v: any) => String(v._id));
+    const progressDocs = trackingId
+      ? await ShortVideoProgress.find({ userId: trackingId, shortVideoId: { $in: videoIds } })
+          .select("shortVideoId watchedSeconds completed")
+          .lean()
+      : [];
+
+    const progressMap = new Map<string, { watchedSeconds: number; completed: boolean }>();
+    for (const p of progressDocs) {
+      progressMap.set(String((p as any).shortVideoId), {
+        watchedSeconds: Number((p as any).watchedSeconds) || 0,
+        completed: Boolean((p as any).completed),
+      });
+    }
+
+    const data = videos.map((v: any) => {
+      const duration = Number(v.durationSeconds) || 0;
+      const prog = progressMap.get(String(v._id)) ?? { watchedSeconds: 0, completed: false };
+      const percentWatched = duration > 0 ? Math.min((prog.watchedSeconds / duration) * 100, 100) : 0;
+      return {
+        ...v,
+        progress: {
+          watchedSeconds: prog.watchedSeconds,
+          completed: prog.completed,
+          percentWatched: Number(percentWatched.toFixed(2)),
+          durationSeconds: duration,
+        },
+      };
+    });
 
     return sendSuccess(res, 200, "Published short videos fetched", data, { page, offset, limit, total, hasNext: offset + data.length < total });
   } catch (error) {
