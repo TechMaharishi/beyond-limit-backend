@@ -645,17 +645,70 @@ export const addShortVideoResource = async (req: Request, res: Response, next: N
       return sendError(res, 403, "Forbidden: only admin or owner can add resources");
     }
 
-    if ((video.resources ?? []).length >= MAX_RESOURCES) {
-      return sendError(res, 400, `Maximum ${MAX_RESOURCES} resources per video`);
+    const existingCount = (video.resources ?? []).length;
+    const files = (req as any).files as Express.Multer.File[] | undefined;
+    const hasFiles = Array.isArray(files) && files.length > 0;
+
+    // Support mixed input: uploaded files + optional JSON resource entries
+    // names[] must align with files[] when uploading; body.resources is for URL-only entries
+    const urlResources: IResourceInput[] = [];
+    if (req.body?.resources) {
+      const parsed = typeof req.body.resources === "string"
+        ? JSON.parse(req.body.resources)
+        : req.body.resources;
+      const { valid, error: resourceError } = parseResources(parsed, existingCount);
+      if (resourceError) return sendError(res, 400, resourceError);
+      urlResources.push(...valid);
     }
 
-    const { valid, error: resourceError } = parseResources([req.body], (video.resources ?? []).length);
-    if (resourceError) return sendError(res, 400, resourceError);
+    const totalIncoming = (hasFiles ? files!.length : 0) + urlResources.length;
+    if (totalIncoming === 0) return sendError(res, 400, "Provide at least one file or resource url");
+    if (existingCount + totalIncoming > MAX_RESOURCES) {
+      return sendError(res, 400, `Adding ${totalIncoming} resource(s) would exceed the maximum of ${MAX_RESOURCES}`);
+    }
 
-    video.resources.push(valid[0] as any);
+    // Upload all files to Cloudinary in parallel
+    const uploadedResources: IResourceInput[] = [];
+    if (hasFiles) {
+      const names: string[] = Array.isArray(req.body?.names)
+        ? req.body.names
+        : typeof req.body?.names === "string"
+        ? JSON.parse(req.body.names)
+        : files!.map((f) => f.originalname);
+
+      const results = await Promise.all(
+        files!.map((file, i) =>
+          new Promise<IResourceInput>((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+              {
+                resource_type: "raw",
+                folder: `short-videos/${id}/resources`,
+                use_filename: true,
+                unique_filename: true,
+              },
+              (error, result) => {
+                if (error) return reject(error);
+                resolve({
+                  name: String(names[i] || file.originalname).trim(),
+                  url: result!.secure_url,
+                  fileType: file.mimetype,
+                  cloudinaryPublicId: result!.public_id,
+                });
+              }
+            );
+            stream.end(file.buffer);
+          })
+        )
+      );
+      uploadedResources.push(...results);
+    }
+
+    const allNew = [...uploadedResources, ...urlResources];
+    video.resources.push(...(allNew as any[]));
     await video.save();
 
-    return sendSuccess(res, 201, "Resource added", video.resources[video.resources.length - 1]);
+    const added = video.resources.slice(existingCount);
+    return sendSuccess(res, 201, `${added.length} resource(s) added`, added);
   } catch (error) {
     return next(error);
   }

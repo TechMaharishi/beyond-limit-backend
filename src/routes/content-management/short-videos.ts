@@ -1,5 +1,6 @@
 import express from "express";
 import { writeLimiter } from "@/utils/rate-limiter";
+import { resourceUpload } from "@/utils/multer";
 import {
   createShortVideo,
   deleteShortVideo,
@@ -33,7 +34,7 @@ router.post("/short-videos/:id/progress", writeLimiter, trackShortVideoProgress)
 router.put("/admin/change-status-short-video/:id", writeLimiter, updateShortVideoStatus);
 
 // ── Resource management ──────────────────────────────────────────────────────
-router.post("/short-videos/:id/resources", writeLimiter, addShortVideoResource);
+router.post("/short-videos/:id/resources", writeLimiter, resourceUpload.array("files", 10), addShortVideoResource);
 router.delete("/short-videos/:id/resources/:resourceId", writeLimiter, removeShortVideoResource);
 
 // ── Subtitle retry ───────────────────────────────────────────────────────────
