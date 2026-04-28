@@ -9,88 +9,52 @@ import admin from "@/config/firebase";
 import { DeviceToken } from "@/models/device-token";
 import { Notification } from "@/models/notification";
 import { sendLearningAssignmentEmail } from "@/utils/mailer";
+import { isRoleIn } from "@/utils/roles";
 
-export const assignShort = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── assignShort ─────────────────────────────────────────────────────────────
+
+export const assignShort = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
       body: { permissions: { assignShorts: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
-    if (!canCreate?.success) {
-      return sendError(res, 403, "Forbidden: insufficient permissions");
-    }
+    if (!canCreate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const role = (user as any).role;
-    const isTrainer = Array.isArray(role)
-      ? role.includes("trainer")
-      : role === "trainer";
-    const isTrainee = Array.isArray(role)
-      ? role.includes("trainee")
-      : role === "trainee";
-    const isAdmin = Array.isArray(role)
-      ? role.includes("admin")
-      : role === "admin";
-    if (!isTrainer && !isTrainee && !isAdmin) {
-      return sendError(
-        res,
-        403,
-        "Forbidden: only trainers, trainees, or admins can assign shorts"
-      );
+    const isAdmin = isRoleIn(role, "admin");
+    const isTrainer = isRoleIn(role, "trainer");
+    const isTrainee = isRoleIn(role, "trainee");
+
+    if (!isAdmin && !isTrainer && !isTrainee) {
+      return sendError(res, 403, "Forbidden: only trainers, trainees, or admins can assign shorts");
     }
 
-    const { userId, shortVideoId } = req.body as {
-      userId?: string;
-      shortVideoId?: string;
-    };
-    if (!userId || !shortVideoId) {
-      return sendError(res, 400, "userId and shortVideoId are required");
-    }
+    const { userId, shortVideoId } = req.body as { userId?: string; shortVideoId?: string };
+    if (!userId || !shortVideoId) return sendError(res, 400, "userId and shortVideoId are required");
 
-    const video = await ShortVideo.findById(shortVideoId).select(
-      "status title durationSeconds"
-    );
+    const video = await ShortVideo.findById(shortVideoId).select("status title durationSeconds");
     if (!video) return sendError(res, 404, "Short video not found");
-    if ((video as any).status !== "published")
+    if ((video as any).status !== "published") {
       return sendError(res, 403, "Short video must be published to assign");
+    }
 
     const result = await auth.api.listUsers({
-      query: {
-        filterField: "id",
-        filterValue: userId,
-        limit: 1,
-        offset: 0,
-        sortBy: "createdAt",
-        sortDirection: "desc",
-      },
-      headers: fromNodeHeaders(req.headers),
+      query: { filterField: "id", filterValue: userId, limit: 1, offset: 0, sortBy: "createdAt", sortDirection: "desc" },
+      headers: apiHeaders,
     });
     const targetUser = (result as any)?.users?.[0];
     if (!targetUser) return sendError(res, 404, "Assignee user not found");
-    const targetRole = (targetUser as any).role;
-    const allowedTargetRoles = isAdmin
-      ? ["trainer", "trainee", "user"]
-      : isTrainer
-      ? ["trainee", "user"]
-      : ["user"];
-    const targetHasAllowedRole = Array.isArray(targetRole)
-      ? targetRole.some((r: any) => allowedTargetRoles.includes(String(r)))
-      : allowedTargetRoles.includes(String(targetRole));
-    if (!targetHasAllowedRole) {
-      return sendError(
-        res,
-        403,
-        `Assignee must have role ${allowedTargetRoles.join("/")}`
-      );
+
+    const allowedTargetRoles = isAdmin ? ["trainer", "trainee", "user"] : isTrainer ? ["trainee", "user"] : ["user"];
+    if (!isRoleIn((targetUser as any).role, ...allowedTargetRoles)) {
+      return sendError(res, 403, `Assignee must have role ${allowedTargetRoles.join("/")}`);
     }
 
     const assignedByRole = isTrainer ? "trainer" : isTrainee ? "trainee" : "admin";
@@ -108,6 +72,7 @@ export const assignShort = async (
       { upsert: true }
     );
 
+    // Push notification + in-app notification (fire-and-forget)
     try {
       const tokenDoc = await DeviceToken.findOne({ userId }).lean();
       const title = "New learning assigned";
@@ -115,34 +80,22 @@ export const assignShort = async (
       if (tokenDoc?.deviceToken) {
         const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
         if (isExpo) {
-          const expoMessage = {
-            to: tokenDoc.deviceToken,
-            sound: "default",
-            title,
-            body,
-          };
           await fetch("https://exp.host/--/api/v2/push/send", {
             method: "POST",
-            headers: {
-              Accept: "application/json",
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(expoMessage),
+            headers: { Accept: "application/json", "Content-Type": "application/json" },
+            body: JSON.stringify({ to: tokenDoc.deviceToken, sound: "default", title, body }),
           });
         } else {
-          const fcmMessage = {
+          await admin.messaging().send({
             token: tokenDoc.deviceToken,
             notification: { title, body },
             data: { _id: String(shortVideoId), event: "short-assigned" },
-          } as any;
-          await admin.messaging().send(fcmMessage);
+          } as any);
         }
       }
       try {
         await Notification.create({
-          userId,
-          title,
-          body,
+          userId, title, body,
           data: { _id: String(shortVideoId), event: "short-assigned" },
           read: false,
         });
@@ -150,11 +103,9 @@ export const assignShort = async (
     } catch {}
 
     try {
-      const targetEmail = String((targetUser as any)?.email || "");
-      const targetName = String((targetUser as any)?.name || "");
       await sendLearningAssignmentEmail({
-        to: targetEmail,
-        firstName: targetName,
+        to: String((targetUser as any)?.email || ""),
+        firstName: String((targetUser as any)?.name || ""),
         learningTitle: String((video as any)?.title || ""),
         assignedByName: String((user as any)?.name || ""),
       });
@@ -162,60 +113,43 @@ export const assignShort = async (
 
     return sendSuccess(res, 201, "Short assigned to user");
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-export const unassignShort = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── unassignShort ────────────────────────────────────────────────────────────
+
+export const unassignShort = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canDelete = await auth.api.userHasPermission({
       body: { permissions: { assignShorts: ["delete"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
-    if (!canDelete?.success) {
-      return sendError(res, 403, "Forbidden: insufficient permissions");
-    }
+    if (!canDelete?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const role = (user as any).role;
-    const isTrainer = Array.isArray(role)
-      ? role.includes("trainer")
-      : role === "trainer";
-    const isTrainee = Array.isArray(role)
-      ? role.includes("trainee")
-      : role === "trainee";
-    const isAdmin = Array.isArray(role)
-      ? role.includes("admin")
-      : role === "admin";
+    const isAdmin = isRoleIn(role, "admin");
+    const isTrainer = isRoleIn(role, "trainer");
+    const isTrainee = isRoleIn(role, "trainee");
 
-    const { userId, shortVideoId } = req.body as {
-      userId?: string;
-      shortVideoId?: string;
-    };
-    if (!userId || !shortVideoId)
-      return sendError(res, 400, "userId and shortVideoId are required");
+    const { userId, shortVideoId } = req.body as { userId?: string; shortVideoId?: string };
+    if (!userId || !shortVideoId) return sendError(res, 400, "userId and shortVideoId are required");
 
     const video = await ShortVideo.findById(shortVideoId).select("_id");
     if (!video) return sendError(res, 404, "Short video not found");
 
     let deletedCount = 0;
     if (isAdmin) {
-      const result = await ShortAssignment.deleteMany({
-        assignedToId: userId,
-        shortVideoId,
-      });
+      const result = await ShortAssignment.deleteMany({ assignedToId: userId, shortVideoId });
       deletedCount = result.deletedCount || 0;
     } else {
-      const assignedByRole = isTrainer ? "trainer" : "trainee";
+      const assignedByRole = isTrainer ? "trainer" : isTrainee ? "trainee" : "";
       const result = await ShortAssignment.deleteOne({
         assignedToId: userId,
         shortVideoId,
@@ -225,40 +159,32 @@ export const unassignShort = async (
       deletedCount = result.deletedCount || 0;
     }
 
-    if (deletedCount === 0) {
-      return sendError(res, 404, "No assignment found to unassign");
-    }
+    if (deletedCount === 0) return sendError(res, 404, "No assignment found to unassign");
 
     return sendSuccess(res, 200, "Short unassigned");
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-export const getAssignedShortsForAssignee = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── getAssignedShortsForAssignee ─────────────────────────────────────────────
+
+export const getAssignedShortsForAssignee = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { assignShorts: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
-    if (!canView?.success) {
-      return sendError(res, 403, "Forbidden: insufficient permissions");
-    }
+    if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const { userId } = req.params as { userId?: string };
-    if (!userId || typeof userId !== "string" || userId.trim().length === 0) {
-      return sendError(res, 400, "userId param is required");
-    }
+    if (!userId || !userId.trim()) return sendError(res, 400, "userId param is required");
 
     const rawLimit = Number(req.query.limit);
     const rawPage = Number(req.query.page);
@@ -266,32 +192,18 @@ export const getAssignedShortsForAssignee = async (
     const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
     const offset = (page - 1) * limit;
 
-    const docs = await ShortAssignment.find({
-      assignedToId: userId,
-    })
-      .sort({ createdAt: -1 })
-      .lean();
+    const docs = await ShortAssignment.find({ assignedToId: userId }).sort({ createdAt: -1 }).lean();
 
-    const shortIds = docs.map((d: any) => String((d as any).shortVideoId));
+    const shortIds = docs.map((d: any) => String(d.shortVideoId));
     const shorts = await ShortVideo.find({ _id: { $in: shortIds } })
-      .select(
-        "title description thumbnailUrl tags status accessLevel visibility durationSeconds createdAt updatedAt user createdBy"
-      )
+      .select("title description thumbnailUrl tags status accessLevel visibility durationSeconds createdAt updatedAt user createdBy")
       .lean();
-    const shortMap = new Map<string, any>(
-      shorts.map((s: any) => [String((s as any)._id), s])
-    );
+    const shortMap = new Map<string, any>(shorts.map((s: any) => [String(s._id), s]));
 
-    const progressDocs = await ShortVideoProgress.find({
-      userId,
-      shortVideoId: { $in: shortIds },
-    })
+    const progressDocs = await ShortVideoProgress.find({ userId, shortVideoId: { $in: shortIds } })
       .select("shortVideoId watchedSeconds completed")
       .lean();
-    const progressByShort = new Map<
-      string,
-      { watchedSeconds: number; completed: boolean }
-    >();
+    const progressByShort = new Map<string, { watchedSeconds: number; completed: boolean }>();
     for (const p of progressDocs) {
       progressByShort.set(String((p as any).shortVideoId), {
         watchedSeconds: Number((p as any).watchedSeconds) || 0,
@@ -300,81 +212,56 @@ export const getAssignedShortsForAssignee = async (
     }
 
     const merged = docs.map((a: any) => {
-      const sid = String((a as any).shortVideoId);
+      const sid = String(a.shortVideoId);
       const sv = shortMap.get(sid);
-      const dur = Number((sv as any)?.durationSeconds || 0);
-      const prog = progressByShort.get(sid) || {
-        watchedSeconds: 0,
-        completed: false,
-      };
-      const watchedSeconds =
-        dur > 0 ? Math.min(prog.watchedSeconds, dur) : prog.watchedSeconds;
-      const percentCompleted =
-        dur > 0 ? Number(Math.min((watchedSeconds / dur) * 100, 100).toFixed(2)) : 0;
+      const dur = Number(sv?.durationSeconds || 0);
+      const prog = progressByShort.get(sid) || { watchedSeconds: 0, completed: false };
+      const watchedSeconds = dur > 0 ? Math.min(prog.watchedSeconds, dur) : prog.watchedSeconds;
+      const percentCompleted = dur > 0 ? Number(Math.min((watchedSeconds / dur) * 100, 100).toFixed(2)) : 0;
       const shortSafe = sv
         ? {
-            _id: String((sv as any)._id),
-            title: (sv as any).title,
-            description: (sv as any).description || "",
-            thumbnailUrl: (sv as any).thumbnailUrl || "",
-            tags: Array.isArray((sv as any).tags) ? (sv as any).tags : [],
-            status: (sv as any).status,
-            accessLevel: (sv as any).accessLevel || null,
-            visibility: (sv as any).visibility || "users",
-            user: String((sv as any).user || ""),
-            createdBy: (sv as any).createdBy
-              ? {
-                  _id: String((sv as any).createdBy._id || ""),
-                  name: (sv as any).createdBy.name || "",
-                  email: (sv as any).createdBy.email || "",
-                }
+            _id: String(sv._id),
+            title: sv.title,
+            description: sv.description || "",
+            thumbnailUrl: sv.thumbnailUrl || "",
+            tags: Array.isArray(sv.tags) ? sv.tags : [],
+            status: sv.status,
+            accessLevel: sv.accessLevel || null,
+            visibility: sv.visibility || "users",
+            user: String(sv.user || ""),
+            createdBy: sv.createdBy
+              ? { _id: String(sv.createdBy._id || ""), name: sv.createdBy.name || "", email: sv.createdBy.email || "" }
               : null,
             durationSeconds: dur,
-            createdAt: (sv as any).createdAt,
-            updatedAt: (sv as any).updatedAt,
+            createdAt: sv.createdAt,
+            updatedAt: sv.updatedAt,
           }
         : null;
       return {
         short: shortSafe,
-        assignedBy: {
-          id: String((a as any).assignedById),
-          name: String((a as any).assignedByName || ""),
-          role: String((a as any).assignedByRole || ""),
-        },
-        assignedAt: (a as any).createdAt,
-        progress: {
-          watchedSeconds,
-          percentCompleted,
-          completed: Boolean(prog.completed),
-        },
+        assignedBy: { id: String(a.assignedById), name: String(a.assignedByName || ""), role: String(a.assignedByRole || "") },
+        assignedAt: a.createdAt,
+        progress: { watchedSeconds, percentCompleted, completed: Boolean(prog.completed) },
       };
     });
 
     const total = merged.length;
     const data = merged.slice(offset, offset + limit);
-    const hasNext = offset + data.length < total;
-
     return sendSuccess(res, 200, "Assigned shorts for assignee fetched", data, {
-      page,
-      offset,
-      limit,
-      total,
-      hasNext,
+      page, offset, limit, total, hasNext: offset + data.length < total,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-export const getMyAssignedShorts = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── getMyAssignedShorts ──────────────────────────────────────────────────────
+
+export const getMyAssignedShorts = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
@@ -384,34 +271,18 @@ export const getMyAssignedShorts = async (
     const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
     const offset = (page - 1) * limit;
 
-    const assignments = await ShortAssignment.find({
-      assignedToId: (user as any).id,
-    })
-      .sort({ createdAt: -1 })
-      .lean();
+    const assignments = await ShortAssignment.find({ assignedToId: (user as any).id }).sort({ createdAt: -1 }).lean();
 
-    const shortIds = assignments.map((a: any) =>
-      String((a as any).shortVideoId)
-    );
+    const shortIds = assignments.map((a: any) => String(a.shortVideoId));
     const shorts = await ShortVideo.find({ _id: { $in: shortIds } })
-      .select(
-        "title description thumbnailUrl tags status accessLevel visibility durationSeconds createdAt updatedAt user createdBy"
-      )
+      .select("title description thumbnailUrl tags status accessLevel visibility durationSeconds createdAt updatedAt user createdBy")
       .lean();
-    const shortMap = new Map<string, any>(
-      shorts.map((s: any) => [String((s as any)._id), s])
-    );
+    const shortMap = new Map<string, any>(shorts.map((s: any) => [String(s._id), s]));
 
-    const progressDocs = await ShortVideoProgress.find({
-      userId: (user as any).id,
-      shortVideoId: { $in: shortIds },
-    })
+    const progressDocs = await ShortVideoProgress.find({ userId: (user as any).id, shortVideoId: { $in: shortIds } })
       .select("shortVideoId watchedSeconds completed")
       .lean();
-    const progressByShort = new Map<
-      string,
-      { watchedSeconds: number; completed: boolean }
-    >();
+    const progressByShort = new Map<string, { watchedSeconds: number; completed: boolean }>();
     for (const p of progressDocs) {
       progressByShort.set(String((p as any).shortVideoId), {
         watchedSeconds: Number((p as any).watchedSeconds) || 0,
@@ -420,219 +291,143 @@ export const getMyAssignedShorts = async (
     }
 
     const merged = assignments.map((a: any) => {
-      const sid = String((a as any).shortVideoId);
+      const sid = String(a.shortVideoId);
       const sv = shortMap.get(sid);
-      const dur = Number((sv as any)?.durationSeconds || 0);
-      const prog = progressByShort.get(sid) || {
-        watchedSeconds: 0,
-        completed: false,
-      };
-      const watchedSeconds =
-        dur > 0 ? Math.min(prog.watchedSeconds, dur) : prog.watchedSeconds;
-      const percentCompleted =
-        dur > 0 ? Number(Math.min((watchedSeconds / dur) * 100, 100).toFixed(2)) : 0;
+      const dur = Number(sv?.durationSeconds || 0);
+      const prog = progressByShort.get(sid) || { watchedSeconds: 0, completed: false };
+      const watchedSeconds = dur > 0 ? Math.min(prog.watchedSeconds, dur) : prog.watchedSeconds;
+      const percentCompleted = dur > 0 ? Number(Math.min((watchedSeconds / dur) * 100, 100).toFixed(2)) : 0;
       const shortSafe = sv
         ? {
-            _id: String((sv as any)._id),
-            title: (sv as any).title,
-            description: (sv as any).description || "",
-            thumbnailUrl: (sv as any).thumbnailUrl || "",
-            tags: Array.isArray((sv as any).tags) ? (sv as any).tags : [],
-            status: (sv as any).status,
-            accessLevel: (sv as any).accessLevel || null,
-            visibility: (sv as any).visibility || "users",
-            user: String((sv as any).user || ""),
-            createdBy: (sv as any).createdBy
-              ? {
-                  _id: String((sv as any).createdBy._id || ""),
-                  name: (sv as any).createdBy.name || "",
-                  email: (sv as any).createdBy.email || "",
-                }
+            _id: String(sv._id),
+            title: sv.title,
+            description: sv.description || "",
+            thumbnailUrl: sv.thumbnailUrl || "",
+            tags: Array.isArray(sv.tags) ? sv.tags : [],
+            status: sv.status,
+            accessLevel: sv.accessLevel || null,
+            visibility: sv.visibility || "users",
+            user: String(sv.user || ""),
+            createdBy: sv.createdBy
+              ? { _id: String(sv.createdBy._id || ""), name: sv.createdBy.name || "", email: sv.createdBy.email || "" }
               : null,
             durationSeconds: dur,
-            createdAt: (sv as any).createdAt,
-            updatedAt: (sv as any).updatedAt,
+            createdAt: sv.createdAt,
+            updatedAt: sv.updatedAt,
           }
         : null;
       return {
         short: shortSafe,
-        assignedBy: {
-          id: String((a as any).assignedById),
-          name: String((a as any).assignedByName || ""),
-          role: String((a as any).assignedByRole || ""),
-        },
-        assignedAt: (a as any).createdAt,
-        progress: {
-          watchedSeconds,
-          percentCompleted,
-          completed: Boolean(prog.completed),
-        },
+        assignedBy: { id: String(a.assignedById), name: String(a.assignedByName || ""), role: String(a.assignedByRole || "") },
+        assignedAt: a.createdAt,
+        progress: { watchedSeconds, percentCompleted, completed: Boolean(prog.completed) },
       };
     });
 
     const total = merged.length;
     const data = merged.slice(offset, offset + limit);
-    const hasNext = offset + data.length < total;
-
     return sendSuccess(res, 200, "Assigned shorts for me fetched", data, {
-      page,
-      offset,
-      limit,
-      total,
-      hasNext,
+      page, offset, limit, total, hasNext: offset + data.length < total,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-export const assignShortsBulk = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── assignShortsBulk ────────────────────────────────────────────────────────
+
+export const assignShortsBulk = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
       body: { permissions: { assignShorts: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
-    if (!canCreate?.success) {
-      return sendError(res, 403, "Forbidden: insufficient permissions");
-    }
+    if (!canCreate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const role = (user as any).role;
-    const isTrainer = Array.isArray(role)
-      ? role.includes("trainer")
-      : role === "trainer";
-    const isTrainee = Array.isArray(role)
-      ? role.includes("trainee")
-      : role === "trainee";
-    const isAdmin = Array.isArray(role)
-      ? role.includes("admin")
-      : role === "admin";
-    if (!isTrainer && !isTrainee && !isAdmin) {
-      return sendError(
-        res,
-        403,
-        "Forbidden: only trainers, trainees, or admins can assign shorts"
-      );
+    const isAdmin = isRoleIn(role, "admin");
+    const isTrainer = isRoleIn(role, "trainer");
+    const isTrainee = isRoleIn(role, "trainee");
+
+    if (!isAdmin && !isTrainer && !isTrainee) {
+      return sendError(res, 403, "Forbidden: only trainers, trainees, or admins can assign shorts");
     }
     const assignedByRole = isTrainer ? "trainer" : isTrainee ? "trainee" : "admin";
 
-    const body = req.body as any;
-    const items = Array.isArray(body?.items) ? body.items : [];
-    if (items.length === 0) {
-      return sendError(res, 400, "items array is required");
-    }
-    if (items.length > 200) {
-      return sendError(res, 400, "Too many items; max 200");
-    }
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (items.length === 0) return sendError(res, 400, "items array is required");
+    if (items.length > 200) return sendError(res, 400, "Too many items; max 200");
 
     const uniqueUserIds = new Set<string>();
     const uniqueShortIds = new Set<string>();
     for (const it of items) {
       const uid = typeof it?.userId === "string" ? it.userId : "";
       const sid = typeof it?.shortVideoId === "string" ? it.shortVideoId : "";
-      if (uid && sid) {
-        uniqueUserIds.add(uid);
-        uniqueShortIds.add(sid);
-      }
+      if (uid && sid) { uniqueUserIds.add(uid); uniqueShortIds.add(sid); }
     }
     if (uniqueUserIds.size === 0 || uniqueShortIds.size === 0) {
       return sendError(res, 400, "items must contain valid userId and shortVideoId");
     }
 
-    const shorts = await ShortVideo.find({
-      _id: { $in: Array.from(uniqueShortIds) as any },
-      status: "published",
-    })
-      .select("_id title")
-      .lean();
-    const validShorts = new Set<string>(shorts.map((s: any) => String((s as any)._id)));
-    const shortTitleById = new Map<string, string>();
-    for (const s of shorts) {
-      shortTitleById.set(String((s as any)?._id), String((s as any)?.title || ""));
-    }
+    const shorts = await ShortVideo.find({ _id: { $in: Array.from(uniqueShortIds) as any }, status: "published" })
+      .select("_id title").lean();
+    const validShorts = new Set<string>(shorts.map((s: any) => String(s._id)));
+    const shortTitleById = new Map<string, string>(shorts.map((s: any) => [String(s._id), String(s.title || "")]));
 
+    // Fetch all target users in parallel using the single shared apiHeaders instance
     const userInfoById = new Map<string, { role: any; email: string; name: string }>();
-    for (const id of Array.from(uniqueUserIds)) {
-      try {
-        const resUsers = await auth.api.listUsers({
-          query: {
-            filterField: "id",
-            filterValue: id,
-            limit: 1,
-            offset: 0,
-            sortBy: "createdAt",
-            sortDirection: "desc",
-          },
-          headers: fromNodeHeaders(req.headers),
-        });
-        const u = (resUsers as any)?.users?.[0];
-        if (u) {
-          userInfoById.set(String((u as any).id), {
-            role: (u as any).role,
-            email: String((u as any).email || ""),
-            name: String((u as any).name || ""),
+    await Promise.all(
+      Array.from(uniqueUserIds).map(async (id) => {
+        try {
+          const res = await auth.api.listUsers({
+            query: { filterField: "id", filterValue: id, limit: 1, offset: 0, sortBy: "createdAt", sortDirection: "desc" },
+            headers: apiHeaders,
           });
-        }
-      } catch {}
-    }
+          const u = (res as any)?.users?.[0];
+          if (u) {
+            userInfoById.set(String(u.id), {
+              role: u.role,
+              email: String(u.email || ""),
+              name: String(u.name || ""),
+            });
+          }
+        } catch {}
+      })
+    );
 
-    const allowedTargetRoles = isAdmin
-      ? ["trainer", "trainee", "user"]
-      : isTrainer
-      ? ["trainee", "user"]
-      : ["user"];
+    const allowedTargetRoles = isAdmin ? ["trainer", "trainee", "user"] : isTrainer ? ["trainee", "user"] : ["user"];
 
-    const results: Array<{
-      userId: string;
-      shortVideoId: string;
-      status: string;
-      message?: string;
-    }> = [];
+    const results: Array<{ userId: string; shortVideoId: string; status: string; message?: string }> = [];
     let successCount = 0;
     let failureCount = 0;
 
     for (const it of items) {
       const userId = String(it?.userId || "");
       const shortVideoId = String(it?.shortVideoId || "");
+
       if (!userId || !shortVideoId) {
         results.push({ userId, shortVideoId, status: "error", message: "Invalid item" });
         failureCount++;
         continue;
       }
       if (!validShorts.has(shortVideoId)) {
-        results.push({
-          userId,
-          shortVideoId,
-          status: "error",
-          message: "Short not found or not published",
-        });
+        results.push({ userId, shortVideoId, status: "error", message: "Short not found or not published" });
         failureCount++;
         continue;
       }
       const info = userInfoById.get(userId);
-      const userRole = info?.role;
-      const targetHasAllowedRole = Array.isArray(userRole)
-        ? (userRole as any[]).some((r: any) => allowedTargetRoles.includes(String(r)))
-        : allowedTargetRoles.includes(String(userRole));
-      if (!targetHasAllowedRole) {
-        results.push({
-          userId,
-          shortVideoId,
-          status: "error",
-          message: `Assignee must have role ${allowedTargetRoles.join("/")}`,
-        });
+      if (!info || !isRoleIn(info.role, ...allowedTargetRoles)) {
+        results.push({ userId, shortVideoId, status: "error", message: `Assignee must have role ${allowedTargetRoles.join("/")}` });
         failureCount++;
         continue;
       }
+
       try {
         const r: any = await ShortAssignment.updateOne(
           { assignedToId: userId, shortVideoId, assignedByRole },
@@ -647,10 +442,8 @@ export const assignShortsBulk = async (
           },
           { upsert: true }
         );
-        const inserted =
-          typeof r?.upsertedCount === "number"
-            ? r.upsertedCount > 0
-            : Boolean((r as any)?.upsertedId);
+        const inserted = typeof r?.upsertedCount === "number" ? r.upsertedCount > 0 : Boolean(r?.upsertedId);
+
         if (inserted) {
           try {
             const tokenDoc = await DeviceToken.findOne({ userId }).lean();
@@ -659,46 +452,32 @@ export const assignShortsBulk = async (
             if (tokenDoc?.deviceToken) {
               const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
               if (isExpo) {
-                const expoMessage = {
-                  to: tokenDoc.deviceToken,
-                  sound: "default",
-                  title,
-                  body,
-                };
                 await fetch("https://exp.host/--/api/v2/push/send", {
                   method: "POST",
-                  headers: {
-                    Accept: "application/json",
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify(expoMessage),
+                  headers: { Accept: "application/json", "Content-Type": "application/json" },
+                  body: JSON.stringify({ to: tokenDoc.deviceToken, sound: "default", title, body }),
                 });
               } else {
-                const fcmMessage = {
+                await admin.messaging().send({
                   token: tokenDoc.deviceToken,
                   notification: { title, body },
                   data: { _id: String(shortVideoId), event: "short-assigned" },
-                } as any;
-                await admin.messaging().send(fcmMessage);
+                } as any);
               }
             }
             try {
               await Notification.create({
-                userId,
-                title,
-                body,
+                userId, title, body,
                 data: { _id: String(shortVideoId), event: "short-assigned" },
                 read: false,
               });
             } catch {}
           } catch {}
           try {
-            const targetEmail = String(info?.email || "");
-            const targetName = String(info?.name || "");
             await sendLearningAssignmentEmail({
-              to: targetEmail,
-              firstName: targetName,
-              learningTitle: String(shortTitleById.get(shortVideoId) || ""),
+              to: info.email,
+              firstName: info.name,
+              learningTitle: shortTitleById.get(shortVideoId) || "",
               assignedByName: String((user as any)?.name || ""),
             });
           } catch {}
@@ -709,22 +488,13 @@ export const assignShortsBulk = async (
           successCount++;
         }
       } catch (e: any) {
-        results.push({
-          userId,
-          shortVideoId,
-          status: "error",
-          message: String(e?.message || "Assignment failed"),
-        });
+        results.push({ userId, shortVideoId, status: "error", message: String(e?.message || "Assignment failed") });
         failureCount++;
       }
     }
 
-    return sendSuccess(res, 201, "Bulk assignment processed", {
-      successes: successCount,
-      failures: failureCount,
-      results,
-    });
+    return sendSuccess(res, 201, "Bulk assignment processed", { successes: successCount, failures: failureCount, results });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };

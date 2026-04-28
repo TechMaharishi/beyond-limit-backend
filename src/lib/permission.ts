@@ -1,13 +1,12 @@
 import { createAccessControl } from "better-auth/plugins/access";
 import { defaultStatements } from "better-auth/plugins/admin/access";
 
-// Define custom RBAC statements
 const statement = {
   ...defaultStatements,
   assignCourse: ["create", "view", "delete"],
   assignShorts: ["create", "view", "delete"],
   trainee: ["view", "update"],
-  shortVideo: ["create", "view"],
+  shortVideo: ["create", "view", "update", "delete"],
   shortVideoStatus: ["create", "view"],
   course: ["create", "update", "delete", "view"],
   courseVideoStatus: ["create", "view"],
@@ -35,7 +34,7 @@ export const trainee = ac.newRole({
   assignCourse: ["create", "view", "delete"],
   assignShorts: ["create", "view", "delete"],
   trainee: ["view"],
-  shortVideo: ["create", "view"],
+  shortVideo: ["create", "view", "update", "delete"],
   shortVideoStatus: ["view"],
   course: ["view"],
   tag: ["view"],
@@ -48,7 +47,7 @@ export const trainer = ac.newRole({
   assignCourse: ["create", "view", "delete"],
   assignShorts: ["create", "view", "delete"],
   trainee: ["view", "update"],
-  shortVideo: ["view", "create"],
+  shortVideo: ["create", "view", "update", "delete"],
   shortVideoStatus: ["view"],
   courseVideoStatus: ["create", "view"],
   course: ["create", "update", "delete", "view"],
@@ -62,7 +61,7 @@ export const admin = ac.newRole({
   assignCourse: ["create", "view", "delete"],
   assignShorts: ["create", "view", "delete"],
   trainee: ["view", "update"],
-  shortVideo: ["create", "view"],
+  shortVideo: ["create", "view", "update", "delete"],
   shortVideoStatus: ["create", "view"],
   course: ["create", "update", "delete", "view"],
   courseVideoStatus: ["create", "view"],

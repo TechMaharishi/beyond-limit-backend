@@ -6,113 +6,130 @@ import { fromNodeHeaders } from "better-auth/node";
 import { ShortVideo } from "@/models/short-videos";
 import { ShortVideoProgress } from "@/models/short-video-progress";
 import { sendSuccess, sendError } from "@/utils/api-response";
-import { Tag } from "@/models/tags";
 import admin from "@/config/firebase";
 import { DeviceToken } from "@/models/device-token";
 import { Notification } from "@/models/notification";
-import { buildVisibilityFilterForRole, canViewVideo } from "@/services/visibility";
+import { isRoleIn } from "@/utils/roles";
+import { escapeRegex, normalizeTag } from "@/utils/string";
+import { isValidObjectId } from "@/utils/mongodb";
+import { resolveTagSlugs } from "@/utils/tags";
+import { buildAutoThumbnailUrl, buildHlsUrl } from "@/utils/cloudinary-helpers";
 
+const MAX_TAGS = 10;
+const MAX_RESOURCES = 10;
 
-const normalizeTag = (s: string) => s.toLowerCase().trim().replace(/\s+/g, "-");
+// ─── progress tracking ───────────────────────────────────────────────────────
 
-// Create short video (admin, trainer, trainee)
-export const createShortVideo = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
-    const user = session?.user;
-    if (!user) {
-      return sendError(res, 401, "Unauthorized");
+/**
+ * Returns the tracking ID for progress records.
+ * - Admin / Trainer / Trainee → user account ID
+ * - User role → activeProfileId from session (required; error if missing)
+ */
+function resolveProgressTrackingId(
+  user: any,
+  session: any
+): { id: string | null; error?: string } {
+  if (isRoleIn(user.role ?? "", "user")) {
+    const profileId = (session?.session as any)?.activeProfileId as string | null;
+    if (!profileId) {
+      return { id: null, error: "No active profile selected. Select a profile before tracking progress." };
     }
+    return { id: profileId };
+  }
+  return { id: String(user.id) };
+}
+
+// ─── resource validation ─────────────────────────────────────────────────────
+
+type IResourceInput = { name: string; url: string; fileType?: string; cloudinaryPublicId?: string };
+
+function parseResources(
+  input: unknown,
+  existingCount = 0
+): { valid: IResourceInput[]; error?: string } {
+  if (input === undefined || input === null) return { valid: [] };
+  if (!Array.isArray(input)) return { valid: [], error: "resources must be an array" };
+  if (input.length > MAX_RESOURCES) {
+    return { valid: [], error: `Maximum ${MAX_RESOURCES} resources allowed` };
+  }
+  if (existingCount + input.length > MAX_RESOURCES) {
+    return { valid: [], error: `Adding these resources would exceed the maximum of ${MAX_RESOURCES}` };
+  }
+  for (const item of input) {
+    if (typeof item.name !== "string" || !item.name.trim()) {
+      return { valid: [], error: "Each resource must have a non-empty name" };
+    }
+    if (typeof item.url !== "string" || !item.url.trim()) {
+      return { valid: [], error: "Each resource must have a non-empty url" };
+    }
+  }
+  return {
+    valid: input.map((r: any) => ({
+      name: String(r.name).trim(),
+      url: String(r.url).trim(),
+      fileType: String(r.fileType || "").trim(),
+      cloudinaryPublicId: String(r.cloudinaryPublicId || "").trim(),
+    })),
+  };
+}
+
+// ─── createShortVideo ────────────────────────────────────────────────────────
+// Creates a new short video record.
+// Accessible by: Admin, Trainer, Trainee (User is blocked via RBAC — shortVideo:create).
+// Thumbnail: uses provided thumbnailUrl, or auto-generates from cloudinaryId if omitted.
+// Resources: optional array of attached documents/files ({ name, url, fileType }).
+
+export const createShortVideo = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
+    const user = session?.user;
+    if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
       body: { permissions: { shortVideo: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
-    if (!canCreate?.success) {
-      return sendError(res, 403, "Forbidden: insufficient permissions");
-    }
+    if (!canCreate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const {
-      title,
-      description,
-      tags,
-      accessLevel,
-      status,
-      visibility,
-      cloudinaryUrl,
-      cloudinaryId,
-      thumbnailUrl,
-      durationSeconds,
+      title, description, tags, accessLevel, status, visibility,
+      cloudinaryUrl, cloudinaryId, thumbnailUrl, durationSeconds, resources,
     } = req.body as {
-      title: string;
-      description: string;
-      tags?: string[] | string;
+      title: string; description: string; tags?: string[] | string;
       accessLevel?: "free" | "develop" | "master";
       status?: "draft" | "pending" | "published";
       visibility?: "clinicians" | "users" | "all";
-      cloudinaryUrl?: string;
-      cloudinaryId?: string;
-      thumbnailUrl?: string;
-      durationSeconds?: number;
+      cloudinaryUrl?: string; cloudinaryId?: string;
+      thumbnailUrl?: string; durationSeconds?: number;
+      resources?: IResourceInput[];
     };
 
     const requestedStatus = status || "draft";
-    const allowedStatuses = ["draft", "pending", "published", "rejected"] as const;
-    if (!allowedStatuses.includes(requestedStatus)) {
-      return sendError(
-        res,
-        400,
-        "Invalid status. Valid statuses are 'draft', 'pending', 'published'."
-      );
+    if (!["draft", "pending", "published", "rejected"].includes(requestedStatus)) {
+      return sendError(res, 400, "Invalid status. Valid statuses are 'draft', 'pending', 'published'.");
     }
 
     const role = (user as any).role;
-    const isAdmin = Array.isArray(role)
-      ? role.includes("admin")
-      : role === "admin";
+    const isAdmin = isRoleIn(role, "admin");
     if (!isAdmin && requestedStatus === "published") {
-      return sendError(
-        res,
-        403,
-        "Forbidden: only admins can set status to 'published'."
-      );
+      return sendError(res, 403, "Forbidden: only admins can set status to 'published'.");
     }
 
     if (requestedStatus !== "draft") {
-      if (!title || !description) {
-        return sendError(res, 400, "Title and description are required.");
-      }
-      let tmpTags: string[] = [];
-      if (typeof tags === "string") {
-        tmpTags = tags
-          .split(",")
-          .map((t) => t.trim())
-          .filter((t) => t.length > 0);
-      } else if (Array.isArray(tags)) {
-        tmpTags = tags;
-      }
-      if (tmpTags.length === 0) {
+      if (!title || !description) return sendError(res, 400, "Title and description are required.");
+      if (!tags || (Array.isArray(tags) ? tags.length === 0 : !tags.trim())) {
         return sendError(res, 400, "At least one tag is required.");
       }
       if (!cloudinaryUrl || !cloudinaryId) {
-        return sendError(
-          res,
-          400,
-          "Video content (cloudinaryUrl and cloudinaryId) is required."
-        );
+        return sendError(res, 400, "Video content (cloudinaryUrl and cloudinaryId) is required.");
       }
     }
 
-    let verified: any | null = null;
+    let verified: any = null;
     if (cloudinaryId) {
       try {
-        // @ts-ignore
         verified = await (cloudinary as any).api.resource(cloudinaryId, { resource_type: "video" });
       } catch {
         return sendError(res, 400, "Cloudinary video not found");
@@ -121,75 +138,40 @@ export const createShortVideo = async (
 
     const durationInput = durationSeconds ? Number(durationSeconds) : 0;
     const duration = Number.isFinite(durationInput) && durationInput > 0
-      ? durationInput
-      : Number(verified?.duration) || 0;
-    const thumbOffset = duration >= 1 ? 1 : 0;
-    const finalThumbnailUrl =
-      thumbnailUrl
-        ? thumbnailUrl
-        : cloudinaryId
-        ? cloudinary.url(cloudinaryId, {
-            resource_type: "video",
-            format: "jpg",
-            transformation: [{ start_offset: thumbOffset }],
-          })
-        : "";
+      ? durationInput : Number(verified?.duration) || 0;
 
-    let rawTagsInput: string[] = [];
-    if (typeof tags === "string") {
-      rawTagsInput = tags
-        .split(",")
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0);
-    } else if (Array.isArray(tags)) {
-      rawTagsInput = tags;
-    }
+    // Use provided thumbnail; auto-generate only if omitted and cloudinaryId is available
+    const finalThumbnailUrl = thumbnailUrl
+      ? thumbnailUrl
+      : cloudinaryId
+      ? buildAutoThumbnailUrl(cloudinaryId, duration)
+      : "";
 
-    const hadTagsInput = Array.isArray(rawTagsInput) && rawTagsInput.length > 0;
-    const normalizedTags = hadTagsInput
-      ? Array.from(new Set(rawTagsInput.map(normalizeTag)))
-      : [];
-
-    if (hadTagsInput) {
-      const existing = await Tag.find({
-        slug: { $in: normalizedTags },
-        active: true,
-      })
-        .select("slug")
-        .lean();
-      const existingSlugs = new Set(existing.map((c: any) => c.slug));
-      const validNormalized = normalizedTags.filter((t) =>
-        existingSlugs.has(t)
-      );
-
-      if (requestedStatus !== "draft" && validNormalized.length === 0) {
+    // Tag validation — error if tags are supplied but none are valid (even in draft mode)
+    let normalizedTags: string[] = [];
+    if (tags) {
+      const raw = Array.isArray(tags) ? tags : tags.split(",").map((t) => t.trim()).filter(Boolean);
+      if (raw.length > MAX_TAGS) {
+        return sendError(res, 400, `Maximum ${MAX_TAGS} tags allowed`);
+      }
+      const slugs = await resolveTagSlugs(raw);
+      if (raw.length > 0 && slugs.length === 0) {
         return sendError(res, 400, "Invalid tags: provide existing tag slugs.");
       }
-      if (
-        requestedStatus === "draft" &&
-        normalizedTags.length > 0 &&
-        validNormalized.length === 0
-      ) {
-        return sendError(res, 400, "Invalid tags: provide existing tag slugs.");
-      }
-      normalizedTags.splice(0, normalizedTags.length, ...validNormalized);
+      normalizedTags = slugs;
     }
 
     const requestedVisibility = visibility || "users";
-    const allowedVisibility = ["clinicians", "users", "all"] as const;
-    if (!allowedVisibility.includes(requestedVisibility as any)) {
+    if (!["clinicians", "users", "all"].includes(requestedVisibility)) {
       return sendError(res, 400, "Invalid visibility");
     }
 
-    // Subtitles are NOT checked inline anymore.
-    // The video is created with caption_status = "pending" (schema default).
-    // The background captionWorker will pick it up and trigger Cloudinary transcription.
+    const { valid: parsedResources, error: resourcesError } = parseResources(resources);
+    if (resourcesError) return sendError(res, 400, resourcesError);
 
     const video = await ShortVideo.create({
-      title: title ?? "",
-      description: description ?? "",
-      tags: normalizedTags,
-      status: requestedStatus,
+      title: title ?? "", description: description ?? "",
+      tags: normalizedTags, status: requestedStatus,
       user: user.id,
       createdBy: {
         _id: new mongoose.Types.ObjectId((user as any).id),
@@ -202,55 +184,46 @@ export const createShortVideo = async (
       accessLevel: accessLevel || "free",
       visibility: requestedVisibility,
       durationSeconds: duration,
-      // caption_status defaults to "pending" via the schema
+      resources: parsedResources,
     });
 
+    // Notify admins about the new submission (fire-and-forget)
     try {
       const adminList = await auth.api.listUsers({
-        query: {
-          filterField: "role",
-          filterValue: "admin",
-          limit: 100,
-          offset: 0,
-          sortBy: "createdAt",
-          sortDirection: "desc",
-        },
-        headers: fromNodeHeaders(req.headers),
+        query: { filterField: "role", filterValue: "admin", limit: 100, offset: 0, sortBy: "createdAt", sortDirection: "desc" },
+        headers: apiHeaders,
       });
-      const admins: any[] = ((adminList as any)?.users || []) as any[];
-      const adminIds: string[] = admins
-        .map((u: any) => String((u as any).id))
+      const adminIds = ((adminList as any)?.users || [])
+        .map((u: any) => String(u.id))
         .filter((id: string) => !!id && id !== String((user as any).id));
+
       const titleMsg = "New short video submission";
       const bodyMsg = `New short video submitted by: ${String((user as any).name || "Unknown")}`;
+
       for (const adminId of adminIds) {
         try {
           const tokenDoc = await DeviceToken.findOne({ userId: adminId }).lean();
           if (tokenDoc?.deviceToken) {
             const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
             if (isExpo) {
-              const expoMessage = { to: tokenDoc.deviceToken, sound: "default", title: titleMsg, body: bodyMsg };
               await fetch("https://exp.host/--/api/v2/push/send", {
                 method: "POST",
                 headers: { Accept: "application/json", "Content-Type": "application/json" },
-                body: JSON.stringify(expoMessage),
+                body: JSON.stringify({ to: tokenDoc.deviceToken, sound: "default", title: titleMsg, body: bodyMsg }),
               });
             } else {
-              const fcmMessage = {
+              await admin.messaging().send({
                 token: tokenDoc.deviceToken,
                 notification: { title: titleMsg, body: bodyMsg },
-                data: { _id: String((video as any)._id), status: String(requestedStatus), event: "short-video-submitted" },
-              } as any;
-              await admin.messaging().send(fcmMessage);
+                data: { _id: String((video as any)._id), status: requestedStatus, event: "short-video-submitted" },
+              } as any);
             }
           }
         } catch {}
         try {
           await Notification.create({
-            userId: adminId,
-            title: titleMsg,
-            body: bodyMsg,
-            data: { _id: String((video as any)._id), status: String(requestedStatus), event: "short-video-submitted" },
+            userId: adminId, title: titleMsg, body: bodyMsg,
+            data: { _id: String((video as any)._id), status: requestedStatus, event: "short-video-submitted" },
             read: false,
           });
         } catch {}
@@ -259,143 +232,131 @@ export const createShortVideo = async (
 
     return sendSuccess(res, 201, "Short video created successfully", video);
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-// Delete a short video (admin or owner only)
-export const deleteShortVideo = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── deleteShortVideo ────────────────────────────────────────────────────────
+// Deletes a short video record plus its Cloudinary video asset and any
+// Cloudinary-hosted resource files attached to the video.
+// Admin → any video. Trainer / Trainee → own videos only.
+
+export const deleteShortVideo = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const apiHeaders = fromNodeHeaders(req.headers);
     const { id } = req.params as { id: string };
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return sendError(res, 400, "Invalid video ID format.");
-    }
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid video ID format.");
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
-    if (!user) {
-      return sendError(res, 401, "Unauthorized");
-    }
+    if (!user) return sendError(res, 401, "Unauthorized");
+
+    const canDelete = await auth.api.userHasPermission({
+      body: { permissions: { shortVideo: ["delete"] } },
+      headers: apiHeaders,
+    });
+    if (!canDelete?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const video = await ShortVideo.findById(id);
-    if (!video) {
-      return sendError(res, 404, "Short video not found");
-    }
+    if (!video) return sendError(res, 404, "Short video not found");
 
     const role = (user as any).role;
-    const isAdmin = Array.isArray(role)
-      ? role.includes("admin")
-      : role === "admin";
+    const isAdmin = isRoleIn(role, "admin");
     const isOwner = video.user.equals(user.id);
 
-    if (!isAdmin && !isOwner) {
-      return sendError(res, 403, "Forbidden: only admin or owner can delete");
+    if (!isAdmin && !isOwner) return sendError(res, 403, "Forbidden: only admin or owner can delete");
+
+    // Destroy the main video asset
+    if (video.cloudinaryId) {
+      try { await cloudinary.uploader.destroy(video.cloudinaryId, { resource_type: "video" }); } catch {}
     }
 
-    try {
-      await cloudinary.uploader.destroy(video.cloudinaryId, {
-        resource_type: "video",
-      });
-    } catch (cloudErr) {
-      
+    // Destroy any Cloudinary-hosted resource files
+    const cloudinaryResources = (video.resources ?? []).filter((r) => r.cloudinaryPublicId);
+    for (const resource of cloudinaryResources) {
+      try { await cloudinary.uploader.destroy(resource.cloudinaryPublicId!); } catch {}
     }
 
     const deleteResult = await ShortVideo.findByIdAndDelete(id);
-    if (!deleteResult) {
-      return sendError(res, 500, "Failed to delete video from database.");
-    }
+    if (!deleteResult) return sendError(res, 500, "Failed to delete video from database.");
 
     return sendSuccess(res, 200, "Short video deleted", { id });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-export const deleteShortVideoFile = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── removeShortVideoFile ────────────────────────────────────────────────────
+// Removes only the video file from Cloudinary and clears media fields,
+// keeping the short video record (title, description, tags, etc.) intact.
+// Admin → any video. Trainer / Trainee → own videos only.
+
+export const removeShortVideoFile = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const apiHeaders = fromNodeHeaders(req.headers);
     const { id } = req.params as { id: string };
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return sendError(res, 400, "Invalid video ID format.");
-    }
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid video ID format.");
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
-    if (!user) {
-      return sendError(res, 401, "Unauthorized");
-    }
+    if (!user) return sendError(res, 401, "Unauthorized");
+
+    const canUpdate = await auth.api.userHasPermission({
+      body: { permissions: { shortVideo: ["update"] } },
+      headers: apiHeaders,
+    });
+    if (!canUpdate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
+
     const video = await ShortVideo.findById(id);
-    if (!video) {
-      return sendError(res, 404, "Short video not found");
-    }
+    if (!video) return sendError(res, 404, "Short video not found");
+
     const role = (user as any).role;
-    const isAdmin = Array.isArray(role) ? role.includes("admin") : role === "admin";
-    const isOwner = video.user.equals(user.id);
-    if (!isAdmin && !isOwner) {
+    if (!isRoleIn(role, "admin") && !video.user.equals(user.id)) {
       return sendError(res, 403, "Forbidden: only admin or owner can delete");
     }
-    const publicId = (video as any).cloudinaryId || "";
-    if (publicId) {
-      try {
-        await cloudinary.uploader.destroy(publicId, { resource_type: "video" });
-      } catch {}
+
+    if (video.cloudinaryId) {
+      try { await cloudinary.uploader.destroy(video.cloudinaryId, { resource_type: "video" }); } catch {}
     }
+
     video.cloudinaryUrl = "";
     video.cloudinaryId = "";
     video.thumbnailUrl = "";
     video.durationSeconds = 0;
-    ;(video as any).subtitles = [];
+    (video as any).subtitles = [];
     await video.save();
     await ShortVideoProgress.deleteMany({ shortVideoId: id }).catch(() => {});
-    return sendSuccess(res, 200, "Short video deleted", {
-      id: video._id,
-      title: video.title,
-      description: video.description,
-      status: video.status,
-      tags: video.tags,
-      cloudinaryUrl: "",
-      cloudinaryId: "",
-      thumbnailUrl: "",
-      durationSeconds: 0,
+
+    return sendSuccess(res, 200, "Short video file deleted", {
+      id: video._id, title: video.title, description: video.description,
+      status: video.status, tags: video.tags,
+      cloudinaryUrl: "", cloudinaryId: "", thumbnailUrl: "", durationSeconds: 0,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-// Get all short videos
-export const getAllShortVideos = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── listShortVideosForManagement ────────────────────────────────────────────
+// Management view — returns all shorts (both visibilities) for the requesting
+// creator or, for admins, the full catalogue filtered by status.
+// Accessible by: Admin, Trainer, Trainee only (blocked for User role).
+
+export const listShortVideosForManagement = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
-    if (!user) {
-      return sendError(res, 401, "Unauthorized");
-    }
+    if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { shortVideoStatus: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
-    if (!canView?.success) {
-      return sendError(res, 403, "Forbidden: insufficient permissions");
-    }
+    if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const rawLimit = Number(req.query.limit);
     const rawPage = Number(req.query.page);
@@ -404,270 +365,185 @@ export const getAllShortVideos = async (
     const offset = (page - 1) * limit;
 
     const statusQuery = (req.query.status as string) || undefined;
-    const tagsQuery =
-      (req.query.tags as string | string[]) ||
-      (req.query.tag as string) ||
-      undefined;
+    const tagsQuery = (req.query.tags as string | string[]) || (req.query.tag as string) || undefined;
     const q = (req.query.q as string) || undefined;
-    const baseConditions: any[] = [];
-    const allowedStatuses = ["draft", "pending", "published", "rejected"] as const;
-    if (statusQuery) {
-      if (!allowedStatuses.includes(statusQuery as any)) {
-        return sendError(res, 400, "Invalid status filter");
-      }
+
+    if (statusQuery && !["draft", "pending", "published", "rejected"].includes(statusQuery)) {
+      return sendError(res, 400, "Invalid status filter");
     }
+
+    const baseConditions: any[] = [];
 
     if (tagsQuery) {
-      const rawTags = Array.isArray(tagsQuery)
-        ? tagsQuery
-        : (tagsQuery as string).split(",");
-      const normalized = Array.from(new Set(rawTags.map(normalizeTag)));
-      const existing = await Tag.find({
-        slug: { $in: normalized },
-        active: true,
-      })
-        .select("slug")
-        .lean();
-      const slugs = existing.map((c: any) => c.slug);
-      if (slugs.length === 0) {
-        return sendError(res, 400, "Invalid tag filter: unknown tags");
-      }
+      const rawTags = Array.isArray(tagsQuery) ? tagsQuery : (tagsQuery as string).split(",");
+      const slugs = await resolveTagSlugs(rawTags);
+      if (slugs.length === 0) return sendError(res, 400, "Invalid tag filter: unknown tags");
       baseConditions.push({ tags: { $in: slugs } });
     }
+
     if (q) {
-      baseConditions.push({
-        $or: [
-          { title: { $regex: q, $options: "i" } },
-          { description: { $regex: q, $options: "i" } },
-        ],
-      });
+      // Use text index when available; the escaped literal regex is a safe fallback
+      const safe = escapeRegex(q);
+      baseConditions.push({ $or: [{ title: { $regex: safe, $options: "i" } }, { description: { $regex: safe, $options: "i" } }] });
     }
 
-    const sortByParam =
-      (req.query.sortBy as string) || (req.query.by as string) || "createdAt";
-    const orderParam =
-      (req.query.order as string) || (req.query.sort as string) || "desc";
-    const orderNormalized = (orderParam || "").toLowerCase();
-    const sortOrder = orderNormalized === "asc" ? 1 : -1;
-    const finalSortOrder = orderNormalized === "dsc" ? -1 : sortOrder;
-
+    const sortByParam = (req.query.sortBy as string) || (req.query.by as string) || "createdAt";
+    const orderParam = (req.query.order as string) || (req.query.sort as string) || "desc";
+    const sortDir: 1 | -1 = orderParam.toLowerCase() === "asc" ? 1 : -1;
     const sort: Record<string, 1 | -1> = {};
-    switch ((sortByParam || "").toLowerCase()) {
-      case "tags":
-        sort["tags"] = finalSortOrder;
-        break;
-      case "title":
-        sort["title"] = finalSortOrder;
-        break;
-      case "createdat":
-      default:
-        sort["createdAt"] = finalSortOrder;
-        break;
+    switch (sortByParam.toLowerCase()) {
+      case "tags": sort["tags"] = sortDir; break;
+      case "title": sort["title"] = sortDir; break;
+      default: sort["createdAt"] = sortDir;
     }
 
-    // Role-based visibility rules
     const role = (user as any).role;
-    const isAdmin = Array.isArray(role)
-      ? role.includes("admin")
-      : role === "admin";
+    const isAdmin = isRoleIn(role, "admin");
 
     let roleFilter: any;
     if (isAdmin) {
-      // Admins: own drafts; all pending and published
-      if (statusQuery) {
-        if (statusQuery === "draft") {
-          roleFilter = { status: "draft", user: (user as any).id };
-        } else {
-          roleFilter = { status: statusQuery };
-        }
-      } else {
-        roleFilter = {
-          $or: [
-            { status: "draft", user: (user as any).id },
-            { status: "pending" },
-            { status: "published" },
-          ],
-        };
-      }
+      roleFilter = statusQuery
+        ? (statusQuery === "draft" ? { status: "draft", user: (user as any).id } : { status: statusQuery })
+        : { $or: [{ status: "draft", user: (user as any).id }, { status: "pending" }, { status: "published" }, { status: "rejected" }] };
     } else {
-      if (statusQuery) {
-        roleFilter = { status: statusQuery, user: (user as any).id };
-      } else {
-        roleFilter = {
-          user: (user as any).id,
-          status: { $in: ["draft", "pending", "published"] },
-        };
-      }
+      roleFilter = statusQuery
+        ? { status: statusQuery, user: (user as any).id }
+        : { user: (user as any).id, status: { $in: ["draft", "pending", "published", "rejected"] } };
     }
 
-    const combinedConditions = [...baseConditions, roleFilter].filter(Boolean);
-    const mongoFilter =
-      combinedConditions.length > 1
-        ? { $and: combinedConditions }
-        : combinedConditions[0] || {};
+    const conditions = [...baseConditions, roleFilter].filter(Boolean);
+    const mongoFilter = conditions.length > 1 ? { $and: conditions } : conditions[0] || {};
 
     const total = await ShortVideo.countDocuments(mongoFilter);
-
     const data = await ShortVideo.find(mongoFilter)
-      .select(
-        "title description tags status cloudinaryUrl thumbnailUrl accessLevel durationSeconds createdAt updatedAt user createdBy subtitles"
-      )
-      .sort(sort)
-      .skip(offset)
-      .limit(limit);
+      .select("title description tags status cloudinaryUrl thumbnailUrl accessLevel durationSeconds resources createdAt updatedAt user createdBy subtitles")
+      .sort(sort).skip(offset).limit(limit);
 
-    const hasNext = offset + data.length < total;
-
-    return sendSuccess(res, 200, "Short videos fetched", data, {
-      page,
-      offset,
-      limit,
-      total,
-      hasNext,
-    });
+    return sendSuccess(res, 200, "Short videos fetched", data, { page, offset, limit, total, hasNext: offset + data.length < total });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-// Fetch a single short video by ID
-export const getShortVideo = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── getShortVideoById ───────────────────────────────────────────────────────
+// Returns a single short video.
+// Visibility gate: User role cannot view "clinicians" shorts.
+// Access level gate (User role only): free / develop / master tier check.
+
+export const getShortVideoById = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const apiHeaders = fromNodeHeaders(req.headers);
     const { id } = req.params as { id: string };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid video ID format.");
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
-    if (!user) {
-      return sendError(res, 401, "Unauthorized");
-    }
+    if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { shortVideo: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
-    if (!canView?.success) {
-      return sendError(res, 403, "Forbidden: insufficient permissions");
-    }
+    if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const video = await ShortVideo.findById(id);
-    if (!video) {
-      return sendError(res, 404, "Short video not found");
-    }
+    if (!video) return sendError(res, 404, "Short video not found");
 
     const role = (user as any).role;
-    const isAdmin = Array.isArray(role)
-      ? role.includes("admin")
-      : role === "admin";
+    const isAdmin = isRoleIn(role, "admin");
+    const isClinician = isRoleIn(role, "admin", "trainer", "trainee");
     const isOwner = video.user.toString() === user.id;
 
     if (!isAdmin && !isOwner) {
-      if (video.status !== "published") {
-        return sendError(res, 403, "Forbidden: video not accessible");
+      if (video.status !== "published") return sendError(res, 403, "Forbidden: video not accessible");
+
+      if (video.visibility === "clinicians" && !isClinician) {
+        return sendError(res, 403, "Forbidden: this content is for clinicians only");
       }
-      const visible = canViewVideo(role as any, (video as any).visibility);
-      if (!visible) {
-        return sendError(res, 403, "Forbidden: visibility not allowed");
+
+      // Tier-based access check — applies to User role only
+      if (!isClinician) {
+        const accountType = String((user as any).accountType ?? "free");
+        const accessMatrix: Record<string, string[]> = {
+          free:    ["free"],
+          develop: ["free", "develop"],
+          master:  ["free", "develop", "master"],
+        };
+        const allowed = accessMatrix[accountType] ?? ["free"];
+        if (!allowed.includes(video.accessLevel)) {
+          return sendError(res, 403, "Forbidden: upgrade your account to access this content");
+        }
       }
     }
 
-    const makeHlsUrl = (publicId: string) =>
-      publicId
-        ? cloudinary.url(publicId, {
-            resource_type: "video",
-            format: "m3u8",
-            transformation: [{ streaming_profile: "auto" }],
-          })
-        : "";
     const publicId = String((video as any).cloudinaryId || "");
-    const hlsUrl = makeHlsUrl(publicId);
+    const hlsUrl = publicId ? buildHlsUrl(publicId) : "";
 
-    const base = video.toObject();
-    const payload = {
-      ...base,
-      cloudinaryUrl: hlsUrl || (base as any).cloudinaryUrl || "",
+    return sendSuccess(res, 200, "Short video fetched", {
+      ...video.toObject(),
+      cloudinaryUrl: hlsUrl || (video as any).cloudinaryUrl || "",
       createdBy: (video as any).createdBy ?? null,
-    };
-
-    return sendSuccess(res, 200, "Short video fetched", payload);
+    });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-// Update an existing short video (admin or owner only)
-export const updateShortVideo = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── updateShortVideo ────────────────────────────────────────────────────────
+// Updates metadata, video file, or thumbnail for a short video.
+// Resources are managed separately via addShortVideoResource / removeShortVideoResource.
+// Thumbnail: uses provided thumbnailUrl, or auto-generates from the new cloudinaryId
+//            if a new video is supplied without a thumbnail.
+// Admin → any video. Trainer / Trainee → own videos only.
+
+export const updateShortVideo = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const apiHeaders = fromNodeHeaders(req.headers);
     const { id } = req.params as { id: string };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid video ID format.");
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
-    if (!user) {
-      return sendError(res, 401, "Unauthorized");
-    }
+    if (!user) return sendError(res, 401, "Unauthorized");
+
+    const canUpdate = await auth.api.userHasPermission({
+      body: { permissions: { shortVideo: ["update"] } },
+      headers: apiHeaders,
+    });
+    if (!canUpdate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const video = await ShortVideo.findById(id);
-    if (!video) {
-      return sendError(res, 404, "Short video not found");
-    }
+    if (!video) return sendError(res, 404, "Short video not found");
 
     const role = (user as any).role;
-    const isAdmin = Array.isArray(role)
-      ? role.includes("admin")
-      : role === "admin";
+    const isAdmin = isRoleIn(role, "admin");
     const isOwner = video.user.toString() === user.id;
 
-    if (!isAdmin && !isOwner) {
-      return res
-        .status(403)
-        .json({ message: "Forbidden: only admin or owner can edit" });
-    }
+    if (!isAdmin && !isOwner) return sendError(res, 403, "Forbidden: only admin or owner can edit");
 
     const {
-      title,
-      description,
-      tags,
-      accessLevel,
-      status,
-      visibility,
-      cloudinaryUrl,
-      cloudinaryId,
-      thumbnailUrl,
-      durationSeconds,
+      title, description, tags, accessLevel, status, visibility,
+      cloudinaryUrl, cloudinaryId, thumbnailUrl, durationSeconds,
     } = req.body as {
-      title?: string;
-      description?: string;
-      tags?: string[] | string;
+      title?: string; description?: string; tags?: string[] | string;
       accessLevel?: "free" | "develop" | "master";
-      status?: "draft" | "pending" | "approved" | "published";
+      status?: string;
       visibility?: "clinicians" | "users" | "all";
-      cloudinaryUrl?: string;
-      cloudinaryId?: string;
-      thumbnailUrl?: string;
-      durationSeconds?: number;
+      cloudinaryUrl?: string; cloudinaryId?: string;
+      thumbnailUrl?: string; durationSeconds?: number;
     };
 
     const updates: any = {};
-
     if (typeof title === "string") updates.title = title;
     if (typeof description === "string") updates.description = description;
     if (typeof cloudinaryUrl === "string") updates.cloudinaryUrl = cloudinaryUrl;
     if (typeof cloudinaryId === "string") updates.cloudinaryId = cloudinaryId;
     if (typeof durationSeconds === "number") updates.durationSeconds = durationSeconds;
 
-    let verified: any | null = null;
-    if (typeof cloudinaryId === "string" && cloudinaryId.trim().length > 0) {
+    let verified: any = null;
+    if (typeof cloudinaryId === "string" && cloudinaryId.trim()) {
       try {
         verified = await (cloudinary as any).api.resource(cloudinaryId, { resource_type: "video" });
       } catch {
@@ -676,10 +552,6 @@ export const updateShortVideo = async (
       if (typeof durationSeconds !== "number") {
         updates.durationSeconds = Number(verified?.duration) || video.durationSeconds || 0;
       }
-
-      // When cloudinaryId changes, reset subtitle pipeline so the worker
-      // picks up the new video for transcription — but defer 2 min so
-      // Cloudinary has time to finish processing the upload.
       if (cloudinaryId !== video.cloudinaryId) {
         updates.subtitle_status = "pending";
         updates.subtitle_failure_reason = null;
@@ -690,157 +562,189 @@ export const updateShortVideo = async (
       }
     }
 
-    // Accept tags as a comma-separated string or an array
-    if (typeof tags === "string" || Array.isArray(tags)) {
-      const rawTags =
-        typeof tags === "string"
-          ? tags
-              .split(",")
-              .map((t) => t.trim())
-              .filter((t) => t.length > 0)
-          : tags;
-      const normalized = Array.from(new Set(rawTags.map(normalizeTag)));
-      const existing = await Tag.find({
-        slug: { $in: normalized },
-        active: true,
-      })
-        .select("slug")
-        .lean();
-      const existingSlugs = new Set(existing.map((c: any) => c.slug));
-      const validNormalized = normalized.filter((t) => existingSlugs.has(t));
-      if (normalized.length > 0 && validNormalized.length === 0) {
+    if (tags !== undefined) {
+      const raw = Array.isArray(tags) ? tags : tags.split(",").map((t) => t.trim()).filter(Boolean);
+      if (raw.length > MAX_TAGS) return sendError(res, 400, `Maximum ${MAX_TAGS} tags allowed`);
+      const slugs = await resolveTagSlugs(raw);
+      if (raw.length > 0 && slugs.length === 0) {
         return sendError(res, 400, "Invalid tags: provide existing tag slugs");
       }
-      if (normalized.length > 0) {
-        updates.tags = validNormalized;
-      }
+      if (slugs.length > 0) updates.tags = slugs;
     }
 
     if (accessLevel) {
-      const allowedAccess = ["free", "develop", "master"] as const;
-      if (!allowedAccess.includes(accessLevel as any)) {
-        return sendError(res, 400, "Invalid accessLevel");
-      }
+      if (!["free", "develop", "master"].includes(accessLevel)) return sendError(res, 400, "Invalid accessLevel");
       updates.accessLevel = accessLevel;
     }
 
     if (status) {
-      const allowedStatuses = [
-        "draft",
-        "pending",
-        "approved",
-        "published",
-      ] as const;
-      if (!allowedStatuses.includes(status as any)) {
-        return sendError(res, 400, "Invalid status");
+      // "approved" is not a valid status — only draft/pending/published/rejected
+      if (!["draft", "pending", "published", "rejected"].includes(status)) {
+        return sendError(res, 400, "Invalid status. Valid values: draft, pending, published, rejected");
       }
-      if (!isAdmin && (status === "approved" || status === "published")) {
-        return sendError(
-          res,
-          403,
-          "Forbidden: only admins can set status to 'approved' or 'published'"
-        );
+      if (!isAdmin && (status === "published" || status === "rejected")) {
+        return sendError(res, 403, "Forbidden: only admins can set status to 'published' or 'rejected'");
       }
       updates.status = status;
     }
 
     if (visibility) {
-      const allowedVisibility = ["clinicians", "users", "all"] as const;
-      if (!allowedVisibility.includes(visibility as any)) {
-        return sendError(res, 400, "Invalid visibility");
-      }
+      if (!["clinicians", "users", "all"].includes(visibility)) return sendError(res, 400, "Invalid visibility");
       updates.visibility = visibility;
     }
 
+    // Resolve thumbnail: explicit value wins; auto-generate only when a new video is set without a thumbnail
     if (thumbnailUrl) {
       updates.thumbnailUrl = thumbnailUrl;
     } else if (cloudinaryId) {
-      const duration =
-        typeof durationSeconds === "number"
-          ? durationSeconds
-          : Number(verified?.duration) || video.durationSeconds || 0;
-      const thumbOffset = duration >= 1 ? 1 : 0;
-      updates.thumbnailUrl = cloudinary.url(cloudinaryId, {
-        resource_type: "video",
-        format: "jpg",
-        transformation: [{ start_offset: thumbOffset }],
-      });
-    } else if (!video.thumbnailUrl && video.cloudinaryId) {
-      const duration = video.durationSeconds || 0;
-      const thumbOffset = duration >= 1 ? 1 : 0;
-      updates.thumbnailUrl = cloudinary.url(video.cloudinaryId, {
-        resource_type: "video",
-        format: "jpg",
-        transformation: [{ start_offset: thumbOffset }],
-      });
+      const dur = typeof durationSeconds === "number"
+        ? durationSeconds
+        : Number(verified?.duration) || video.durationSeconds || 0;
+      updates.thumbnailUrl = buildAutoThumbnailUrl(cloudinaryId, dur);
     }
 
-    // Delete old video from Cloudinary if cloudinaryId is updated
-    if (
-      updates.cloudinaryId &&
-      video.cloudinaryId &&
-      updates.cloudinaryId !== video.cloudinaryId
-    ) {
-      try {
-        await cloudinary.uploader.destroy(video.cloudinaryId, {
-          resource_type: "video",
-        });
-      } catch (error) {
-        console.error("Cloudinary deletion failed for previous video:", error);
-      }
+    // Remove old Cloudinary asset when replacing with a different video
+    if (updates.cloudinaryId && video.cloudinaryId && updates.cloudinaryId !== video.cloudinaryId) {
+      try { await cloudinary.uploader.destroy(video.cloudinaryId, { resource_type: "video" }); } catch {}
     }
 
-    const updated = await ShortVideo.findByIdAndUpdate(id, updates, {
-      returnDocument: 'after',
-    });
+    const updated = await ShortVideo.findByIdAndUpdate(id, updates, { returnDocument: "after" });
     return sendSuccess(res, 200, "Short video updated", updated);
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-// Update progress for a single short video (watch time and completion)
-export const updateShortVideoProgress = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+// ─── addShortVideoResource ───────────────────────────────────────────────────
+// Appends one resource to the video's resources array.
+// Enforces the maximum of MAX_RESOURCES resources per video.
+// Admin → any video. Trainer / Trainee → own videos only.
+
+export const addShortVideoResource = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const { id } = req.params as { id: string };
+
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid video ID format.");
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
+    const user = session?.user;
+    if (!user) return sendError(res, 401, "Unauthorized");
+
+    const canUpdate = await auth.api.userHasPermission({
+      body: { permissions: { shortVideo: ["update"] } },
+      headers: apiHeaders,
+    });
+    if (!canUpdate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
+
+    const video = await ShortVideo.findById(id);
+    if (!video) return sendError(res, 404, "Short video not found");
+
+    const role = (user as any).role;
+    if (!isRoleIn(role, "admin") && !video.user.equals(user.id)) {
+      return sendError(res, 403, "Forbidden: only admin or owner can add resources");
+    }
+
+    if ((video.resources ?? []).length >= MAX_RESOURCES) {
+      return sendError(res, 400, `Maximum ${MAX_RESOURCES} resources per video`);
+    }
+
+    const { valid, error: resourceError } = parseResources([req.body], (video.resources ?? []).length);
+    if (resourceError) return sendError(res, 400, resourceError);
+
+    video.resources.push(valid[0] as any);
+    await video.save();
+
+    return sendSuccess(res, 201, "Resource added", video.resources[video.resources.length - 1]);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// ─── removeShortVideoResource ────────────────────────────────────────────────
+// Removes one resource by its _id from the video's resources array.
+// Also destroys the Cloudinary asset if cloudinaryPublicId is set on the resource.
+// Admin → any video. Trainer / Trainee → own videos only.
+
+export const removeShortVideoResource = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const { id, resourceId } = req.params as { id: string; resourceId: string };
+
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid video ID format.");
+    if (!isValidObjectId(resourceId)) return sendError(res, 400, "Invalid resource ID format.");
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
+    const user = session?.user;
+    if (!user) return sendError(res, 401, "Unauthorized");
+
+    const canUpdate = await auth.api.userHasPermission({
+      body: { permissions: { shortVideo: ["update"] } },
+      headers: apiHeaders,
+    });
+    if (!canUpdate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
+
+    const video = await ShortVideo.findById(id);
+    if (!video) return sendError(res, 404, "Short video not found");
+
+    const role = (user as any).role;
+    if (!isRoleIn(role, "admin") && !video.user.equals(user.id)) {
+      return sendError(res, 403, "Forbidden: only admin or owner can remove resources");
+    }
+
+    const resource = video.resources.find((r) => r._id.toString() === resourceId);
+    if (!resource) return sendError(res, 404, "Resource not found");
+
+    if (resource.cloudinaryPublicId) {
+      try { await cloudinary.uploader.destroy(resource.cloudinaryPublicId); } catch {}
+    }
+
+    video.resources = video.resources.filter((r) => r._id.toString() !== resourceId) as any;
+    await video.save();
+
+    return sendSuccess(res, 200, "Resource removed", { resourceId });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// ─── trackShortVideoProgress ─────────────────────────────────────────────────
+// Records how far a viewer has watched a short video (idempotent — stores max).
+// Admin / Trainer / Trainee → tracked by user account ID.
+// User role → tracked by activeProfileId (must be set in session).
+
+export const trackShortVideoProgress = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const apiHeaders = fromNodeHeaders(req.headers);
     const { id } = req.params as { id: string };
     const { watchedSeconds } = req.body as { watchedSeconds: number };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
-    if (!user) {
-      return sendError(res, 401, "Unauthorized");
-    }
+    if (!user) return sendError(res, 401, "Unauthorized");
 
     if (typeof watchedSeconds !== "number" || watchedSeconds < 0) {
       return sendError(res, 400, "Invalid watchedSeconds");
     }
 
+    const { id: trackingId, error: trackingError } = resolveProgressTrackingId(user, session);
+    if (trackingError) return sendError(res, 400, trackingError);
+
     const video = await ShortVideo.findById(id);
-    if (!video) {
-      return sendError(res, 404, "Short video not found");
-    }
+    if (!video) return sendError(res, 404, "Short video not found");
 
     const duration = video.durationSeconds || 0;
-    const cappedWatched =
-      duration > 0 ? Math.min(watchedSeconds, duration) : watchedSeconds;
+    const cappedWatched = duration > 0 ? Math.min(watchedSeconds, duration) : watchedSeconds;
 
     const progress = await ShortVideoProgress.findOneAndUpdate(
-      { userId: user.id, shortVideoId: id },
+      { userId: trackingId, shortVideoId: id },
       { $max: { watchedSeconds: cappedWatched } },
-      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     );
 
     const finalWatched = progress.watchedSeconds;
-    const percentWatched =
-      duration > 0 ? Math.min((finalWatched / duration) * 100, 100) : 0;
-    const completed =
-      percentWatched >= 90 || (duration > 0 && finalWatched >= duration);
+    const percentWatched = duration > 0 ? Math.min((finalWatched / duration) * 100, 100) : 0;
+    const completed = percentWatched >= 90 || (duration > 0 && finalWatched >= duration);
 
     if (progress.completed !== completed) {
       progress.completed = completed;
@@ -854,43 +758,34 @@ export const updateShortVideoProgress = async (
       durationSeconds: duration,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-// Get progress for a single short video
-export const getShortVideoProgress = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { id } = req.params as { id: string };
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
-    const user = session?.user;
-    if (!user) {
-      return sendError(res, 401, "Unauthorized");
-    }
+// ─── getShortVideoProgress ───────────────────────────────────────────────────
+// Returns the current watch progress for a short video.
+// Tracking key follows the same role-based rules as trackShortVideoProgress.
 
-    const video = await ShortVideo.findById(id).select(
-      "durationSeconds createdBy"
-    );
-    if (!video) {
-      return sendError(res, 404, "Short video not found");
-    }
+export const getShortVideoProgress = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const { id } = req.params as { id: string };
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
+    const user = session?.user;
+    if (!user) return sendError(res, 401, "Unauthorized");
+
+    const { id: trackingId, error: trackingError } = resolveProgressTrackingId(user, session);
+    if (trackingError) return sendError(res, 400, trackingError);
+
+    const video = await ShortVideo.findById(id).select("durationSeconds createdBy");
+    if (!video) return sendError(res, 404, "Short video not found");
 
     const duration = video.durationSeconds || 0;
-    const progress = await ShortVideoProgress.findOne({
-      userId: user.id,
-      shortVideoId: id,
-    });
-
+    const progress = await ShortVideoProgress.findOne({ userId: trackingId, shortVideoId: id });
     const watched = progress?.watchedSeconds || 0;
     const completed = progress?.completed || false;
-    const percentWatched =
-      duration > 0 ? Math.min((watched / duration) * 100, 100) : 0;
+    const percentWatched = duration > 0 ? Math.min((watched / duration) * 100, 100) : 0;
 
     return sendSuccess(res, 200, "Short video progress fetched", {
       watchedSeconds: watched,
@@ -900,262 +795,193 @@ export const getShortVideoProgress = async (
       createdBy: (video as any).createdBy ?? null,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
+// ─── listPublishedShortVideos ─────────────────────────────────────────────────
+// Returns published shorts available to the requesting user.
+// Admin / Trainer / Trainee → all visibilities (clinicians + users + all).
+// User role → cannot see "clinicians" shorts (users + all only).
 
-// Get all shorts by user
-export const getAllShortVideoByUser = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export const listPublishedShortVideos = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
-    if (!user) {
-      return sendError(res, 401, "Unauthorized");
-    }
+    if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { shortVideo: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
-    if (!canView?.success) {
-      return sendError(res, 403, "Forbidden: insufficient permissions");
-    }
+    if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const limit = req.query.limit ? Math.max(1, Number(req.query.limit)) : 10;
     const page = req.query.page ? Math.max(1, Number(req.query.page)) : 1;
     const offset = (page - 1) * limit;
 
-    const tagsQuery =
-      (req.query.tags as string | string[]) ||
-      (req.query.tag as string) ||
-      undefined;
+    const tagsQuery = (req.query.tags as string | string[]) || (req.query.tag as string) || undefined;
     const q = (req.query.q as string) || undefined;
 
-    const filter: any = { status: "published" };
-
-    // Sorting controls
-    const sortByParam =
-      (req.query.sortBy as string) || (req.query.by as string) || "createdAt";
-    const orderParam =
-      (req.query.order as string) || (req.query.sort as string) || "desc";
-    const orderNormalized = (orderParam || "").toLowerCase();
-    const sortOrder = orderNormalized === "asc" ? 1 : -1;
-    const finalSortOrder = orderNormalized === "dsc" ? -1 : sortOrder;
-
+    const sortByParam = (req.query.sortBy as string) || (req.query.by as string) || "createdAt";
+    const orderParam = (req.query.order as string) || (req.query.sort as string) || "desc";
+    const sortDir: 1 | -1 = orderParam.toLowerCase() === "asc" ? 1 : -1;
     const sort: Record<string, 1 | -1> = {};
-    switch ((sortByParam || "").toLowerCase()) {
-      case "tags":
-        sort["tags"] = finalSortOrder;
-        break;
-      case "title":
-        sort["title"] = finalSortOrder;
-        break;
-      case "createdat":
-      default:
-        sort["createdAt"] = finalSortOrder;
-        break;
+    switch (sortByParam.toLowerCase()) {
+      case "tags": sort["tags"] = sortDir; break;
+      case "title": sort["title"] = sortDir; break;
+      default: sort["createdAt"] = sortDir;
     }
 
+    const role = (user as any).role;
+    const isClinician = isRoleIn(role, "admin", "trainer", "trainee");
+
+    const visibilityFilter = isClinician
+      ? { visibility: { $in: ["clinicians", "users", "all"] } }
+      : { visibility: { $in: ["users", "all"] } };
+
+    const filter: any = { status: "published", ...visibilityFilter };
+
     if (tagsQuery) {
-      const rawTags = Array.isArray(tagsQuery)
-        ? tagsQuery
-        : (tagsQuery as string).split(",");
-      const normalized = Array.from(new Set(rawTags.map(normalizeTag)));
-      const existing = await Tag.find({
-        slug: { $in: normalized },
-        active: true,
-      })
-        .select("slug")
-        .lean();
-      const slugs = existing.map((c: any) => c.slug);
-      if (slugs.length === 0) {
-        return sendError(res, 400, "Invalid tag filter: unknown tags");
-      }
+      const rawTags = Array.isArray(tagsQuery) ? tagsQuery : (tagsQuery as string).split(",");
+      const slugs = await resolveTagSlugs(rawTags);
+      if (slugs.length === 0) return sendError(res, 400, "Invalid tag filter: unknown tags");
       filter.tags = { $in: slugs };
     }
 
     if (q) {
-      filter.$or = [
-        { title: { $regex: q, $options: "i" } },
-        { description: { $regex: q, $options: "i" } },
-      ];
+      const safe = escapeRegex(q);
+      filter.$or = [{ title: { $regex: safe, $options: "i" } }, { description: { $regex: safe, $options: "i" } }];
     }
-
-    Object.assign(filter, buildVisibilityFilterForRole((user as any).role));
 
     const total = await ShortVideo.countDocuments(filter);
     const data = await ShortVideo.find(filter)
-      .select(
-        "title description tags status cloudinaryUrl thumbnailUrl accessLevel visibility durationSeconds createdAt updatedAt user createdBy subtitles"
-      )
-      .sort(sort)
-      .skip(offset)
-      .limit(limit);
+      .select("title description tags status cloudinaryUrl thumbnailUrl accessLevel visibility durationSeconds resources createdAt updatedAt user createdBy subtitles")
+      .sort(sort).skip(offset).limit(limit);
 
-    const hasNext = offset + data.length < total;
-
-    return sendSuccess(res, 200, "Published short videos fetched", data, {
-      page,
-      offset,
-      limit,
-      total,
-      hasNext,
-    });
+    return sendSuccess(res, 200, "Published short videos fetched", data, { page, offset, limit, total, hasNext: offset + data.length < total });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-//Change status of the short video (only Admin can change)
-export const changeShortVideoStatus = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { id } = req.params as { id: string };
-    if (!id) {
-      return sendError(res, 400, "Video id is required");
-    }
+// ─── updateShortVideoStatus ──────────────────────────────────────────────────
+// Changes the moderation status of a short video.
+// Admin       → published or rejected (any video)
+// Trainer / Trainee → draft or pending (own videos only)
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+export const updateShortVideoStatus = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const { id } = req.params as { id: string };
+
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid video ID format.");
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
-    if (!user) {
-      return sendError(res, 401, "Unauthorized");
-    }
+    if (!user) return sendError(res, 401, "Unauthorized");
 
     const role = (user as any).role;
-    const isAdmin = Array.isArray(role)
-      ? role.includes("admin")
-      : role === "admin";
-    if (!isAdmin) {
-      return sendError(res, 403, "Forbidden: only admin can change status");
-    }
+    const isAdmin = isRoleIn(role, "admin");
+    const isCreator = isRoleIn(role, "trainer", "trainee");
+
+    if (!isAdmin && !isCreator) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const video = await ShortVideo.findById(id);
-    if (!video) {
-      return sendError(res, 404, "Short video not found");
-    }
+    if (!video) return sendError(res, 404, "Short video not found");
 
     const { status, rejectReason } = req.body as {
-      status?: "draft" | "pending" | "published" | "rejected";
+      status?: string;
       rejectReason?: string;
     };
-    const allowedStatuses = [
-      "draft",
-      "pending",
-      "published",
-      "rejected",
-    ] as const;
-    if (!status || typeof status !== "string") {
-      return sendError(res, 400, "Status is required");
+
+    if (!status || typeof status !== "string") return sendError(res, 400, "Status is required");
+
+    if (isAdmin) {
+      if (!["published", "rejected"].includes(status)) {
+        return sendError(res, 400, "Admin can only set status to 'published' or 'rejected'");
+      }
+    } else {
+      if (!["draft", "pending"].includes(status)) {
+        return sendError(res, 400, "You can only set status to 'draft' or 'pending'");
+      }
+      if (!video.user.equals(user.id)) {
+        return sendError(res, 403, "Forbidden: you can only change the status of your own videos");
+      }
     }
-    if (!allowedStatuses.includes(status as any)) {
-      return sendError(res, 400, "Invalid status value");
-    }
-    // If rejecting, require a non-empty rejectReason
+
     if (status === "rejected") {
-      const reason =
-        typeof rejectReason === "string" ? rejectReason.trim() : "";
-      if (!reason) {
-        return sendError(
-          res,
-          400,
-          "rejectReason is required when status is 'rejected'"
-        );
-      }
+      const reason = typeof rejectReason === "string" ? rejectReason.trim() : "";
+      if (!reason) return sendError(res, 400, "rejectReason is required when status is 'rejected'");
       video.rejectReason = reason;
-    } else if (status === "published") {
-      // When publishing, clear any existing rejectReason before marking as published
-      if (video.rejectReason) {
-        video.rejectReason = "";
-      }
+    } else if (status === "published" && video.rejectReason) {
+      video.rejectReason = "";
     }
 
     if (video.status === status && status !== "rejected") {
       return sendError(res, 400, "Video is already in requested status");
     }
 
-    video.status = status;
+    video.status = status as any;
     await video.save();
 
-    try {
-      const ownerId = String((video as any).user || "");
-      if (ownerId && (status === "published" || status === "rejected")) {
-        const tokenDoc = await DeviceToken.findOne({ userId: ownerId }).lean();
-        const titleMsg = status === "published" ? "Short video published" : "Short video rejected";
-        const vTitle = String((video as any).title || "your short video");
-        const rejectText = String((video as any).rejectReason || "");
-        const bodyMsg = status === "published"
-          ? `Your ${vTitle} has been approved.`
-          : (rejectText
-              ? `Your ${vTitle} was declined. Please review the feedback: ${rejectText}`
-              : `Your ${vTitle} was declined. Please review the feedback.`);
+    // Notify the video owner when admin publishes or rejects (fire-and-forget)
+    if (isAdmin && (status === "published" || status === "rejected")) {
+      try {
+        const ownerId = String((video as any).user || "");
+        if (ownerId) {
+          const tokenDoc = await DeviceToken.findOne({ userId: ownerId }).lean();
+          const titleMsg = status === "published" ? "Short video published" : "Short video rejected";
+          const vTitle = String((video as any).title || "your short video");
+          const rejectText = String((video as any).rejectReason || "");
+          const bodyMsg = status === "published"
+            ? `Your ${vTitle} has been approved.`
+            : rejectText
+            ? `Your ${vTitle} was declined. Please review the feedback: ${rejectText}`
+            : `Your ${vTitle} was declined. Please review the feedback.`;
 
-        if (tokenDoc?.deviceToken) {
-          const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
-          if (isExpo) {
-            const expoMessage = { to: tokenDoc.deviceToken, sound: "default", title: titleMsg, body: bodyMsg };
-            await fetch("https://exp.host/--/api/v2/push/send", {
-              method: "POST",
-              headers: { Accept: "application/json", "Content-Type": "application/json" },
-              body: JSON.stringify(expoMessage),
-            });
-          } else {
-            const fcmMessage = {
-              token: tokenDoc.deviceToken,
-              notification: { title: titleMsg, body: bodyMsg },
-              data: {
-                _id: String((video as any)._id),
-                status,
-                event: status === "published" ? "short-video-published" : "short-video-rejected",
-              },
-            } as any;
-            await admin.messaging().send(fcmMessage);
+          if (tokenDoc?.deviceToken) {
+            const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
+            if (isExpo) {
+              await fetch("https://exp.host/--/api/v2/push/send", {
+                method: "POST",
+                headers: { Accept: "application/json", "Content-Type": "application/json" },
+                body: JSON.stringify({ to: tokenDoc.deviceToken, sound: "default", title: titleMsg, body: bodyMsg }),
+              });
+            } else {
+              await admin.messaging().send({
+                token: tokenDoc.deviceToken,
+                notification: { title: titleMsg, body: bodyMsg },
+                data: { _id: String((video as any)._id), status, event: status === "published" ? "short-video-published" : "short-video-rejected" },
+              } as any);
+            }
           }
-        }
 
-        try {
-          await Notification.create({
-            userId: ownerId,
-            title: titleMsg,
-            body: bodyMsg,
-            data: {
-              _id: String((video as any)._id),
-              status,
-              event: status === "published" ? "short-video-published" : "short-video-rejected",
-            },
-            read: false,
-          });
-        } catch {}
-      }
-    } catch {}
+          try {
+            await Notification.create({
+              userId: ownerId, title: titleMsg, body: bodyMsg,
+              data: { _id: String((video as any)._id), status, event: status === "published" ? "short-video-published" : "short-video-rejected" },
+              read: false,
+            });
+          } catch {}
+        }
+      } catch {}
+    }
 
     return sendSuccess(res, 200, "Short video status updated", {
-      id: video._id,
-      title: video.title,
-      description: video.description,
-      status: video.status,
-      rejectReason: (video as any).rejectReason,
-      tags: video.tags,
-      cloudinaryUrl: (video as any).cloudinaryUrl,
-      accessLevel: (video as any).accessLevel,
-      durationSeconds: (video as any).durationSeconds,
-      createdAt: video.createdAt,
-      updatedAt: video.updatedAt,
-      user: video.user,
+      id: video._id, title: video.title, description: video.description,
+      status: video.status, rejectReason: (video as any).rejectReason,
+      tags: video.tags, cloudinaryUrl: (video as any).cloudinaryUrl,
+      accessLevel: (video as any).accessLevel, durationSeconds: (video as any).durationSeconds,
+      createdAt: video.createdAt, updatedAt: video.updatedAt, user: video.user,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
+// ─── Tag management (kept for backward compatibility with existing routes) ───
+
+export { createTag, getTag, deactivateTag, activateTag, deleteTag } from "@/controllers/tags/tags";

@@ -8,6 +8,14 @@ interface ISubtitleTrack {
   default?: boolean;
 }
 
+interface IResource {
+  _id: mongoose.Types.ObjectId;
+  name: string;
+  url: string;
+  fileType: string;
+  cloudinaryPublicId?: string;
+}
+
 interface IShortVideo extends Document {
   title: string;
   description: string;
@@ -26,6 +34,7 @@ interface IShortVideo extends Document {
   accessLevel: "free" | "develop" | "master";
   visibility: "clinicians" | "users" | "all";
   durationSeconds: number;
+  resources: IResource[];
   subtitles?: ISubtitleTrack[];
   /* ── subtitle-pipeline fields ── */
   subtitle_status: "pending" | "processing" | "completed" | "failed";
@@ -49,6 +58,14 @@ const CreatedBySchema = new Schema(
   { _id: false }
 );
 
+// _id is enabled (default) so each resource gets a stable ID for individual removal
+const ResourceSchema = new Schema({
+  name: { type: String, required: true, trim: true },
+  url: { type: String, required: true },
+  fileType: { type: String, default: "" },
+  cloudinaryPublicId: { type: String, default: "" },
+});
+
 const SubtitleTrackSchema = new Schema(
   {
     lang: { type: String, default: "en" },
@@ -60,11 +77,21 @@ const SubtitleTrackSchema = new Schema(
   { _id: false }
 );
 
+const MAX_TAGS = 10;
+const MAX_RESOURCES = 10;
+
 const ShortVideoSchema = new Schema<IShortVideo>(
   {
     title: { type: String, default: "" },
     description: { type: String, default: "" },
-    tags: [{ type: String, default: [] }],
+    tags: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: (v: string[]) => v.length <= MAX_TAGS,
+        message: `A short video may have at most ${MAX_TAGS} tags`,
+      },
+    },
     status: {
       type: String,
       enum: ["draft", "pending", "published", "rejected"],
@@ -87,6 +114,14 @@ const ShortVideoSchema = new Schema<IShortVideo>(
       default: "users",
     },
     durationSeconds: { type: Number, default: 0 },
+    resources: {
+      type: [ResourceSchema],
+      default: [],
+      validate: {
+        validator: (v: any[]) => v.length <= MAX_RESOURCES,
+        message: `A short video may have at most ${MAX_RESOURCES} resources`,
+      },
+    },
     subtitles: { type: [SubtitleTrackSchema], default: [] },
 
     /* ── subtitle-pipeline fields ── */
@@ -102,10 +137,11 @@ const ShortVideoSchema = new Schema<IShortVideo>(
     // Default to now so existing records without this field are immediately eligible
     not_before: { type: Date, default: () => new Date(), index: true },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
+
+// Text index for efficient title/description search
+ShortVideoSchema.index({ title: "text", description: "text" });
 
 export const ShortVideo = mongoose.model<IShortVideo>(
   "ShortVideo",

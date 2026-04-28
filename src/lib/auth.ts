@@ -92,6 +92,12 @@ export const auth = betterAuth({
       },
     },
   },
+  rateLimit: {
+    enabled: true,
+    window: 60,   // 60-second rolling window
+    max: 20,      // max 20 auth requests per IP per window
+    storage: "memory",
+  },
   plugins: [
     adminPlugin({
       ac,
