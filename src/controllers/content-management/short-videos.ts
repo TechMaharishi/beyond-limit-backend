@@ -858,7 +858,7 @@ export const listPublishedShortVideos = async (req: Request, res: Response, next
 
     const total = await ShortVideo.countDocuments(filter);
     const data = await ShortVideo.find(filter)
-      .select("title description tags status cloudinaryUrl thumbnailUrl accessLevel visibility durationSeconds resources createdAt updatedAt user createdBy subtitles")
+      .select("title description tags status thumbnailUrl accessLevel visibility durationSeconds createdAt updatedAt createdBy")
       .sort(sort).skip(offset).limit(limit);
 
     return sendSuccess(res, 200, "Published short videos fetched", data, { page, offset, limit, total, hasNext: offset + data.length < total });
