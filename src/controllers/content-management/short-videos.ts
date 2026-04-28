@@ -416,7 +416,7 @@ export const listShortVideosForManagement = async (req: Request, res: Response, 
 
     const total = await ShortVideo.countDocuments(mongoFilter);
     const data = await ShortVideo.find(mongoFilter)
-      .select("title description tags status cloudinaryUrl thumbnailUrl accessLevel durationSeconds resources createdAt updatedAt user createdBy subtitles")
+      .select("title description tags status thumbnailUrl accessLevel durationSeconds createdAt updatedAt createdBy")
       .sort(sort).skip(offset).limit(limit);
 
     return sendSuccess(res, 200, "Short videos fetched", data, { page, offset, limit, total, hasNext: offset + data.length < total });
