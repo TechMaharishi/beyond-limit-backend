@@ -4,7 +4,11 @@ export type ShortAssignerRole = "trainer" | "trainee" | "admin";
 
 export interface IShortAssignment extends Document {
   shortVideoId: Types.ObjectId;
+  // For non-user roles (trainee/trainer): stores the user account ID.
+  // For user role: stores the user account ID; profileId stores the active profile.
   assignedToId: string;
+  // Set when assigning to a role="user" account — identifies which profile the assignment belongs to.
+  profileId: string;
   assignedById: string;
   assignedByRole: ShortAssignerRole;
   assignedByName?: string;
@@ -21,6 +25,7 @@ const ShortAssignmentSchema = new Schema<IShortAssignment>(
       index: true,
     },
     assignedToId: { type: String, required: true, index: true },
+    profileId: { type: String, default: "" },
     assignedById: { type: String, required: true, index: true },
     assignedByRole: {
       type: String,
@@ -32,11 +37,15 @@ const ShortAssignmentSchema = new Schema<IShortAssignment>(
   { timestamps: true }
 );
 
+// profileId="" for non-user-role targets; included in uniqueness so each profile gets its own assignment set
 ShortAssignmentSchema.index(
-  { assignedToId: 1, shortVideoId: 1, assignedByRole: 1 },
+  { assignedToId: 1, shortVideoId: 1, assignedByRole: 1, profileId: 1 },
   { unique: true }
 );
-ShortAssignmentSchema.index({ assignedById: 1, assignedByRole: 1 });
+// Listing assignments for a user account, optionally scoped to a profile
+ShortAssignmentSchema.index({ assignedToId: 1, profileId: 1, createdAt: -1 });
+// Listing assignments made by a specific assigner
+ShortAssignmentSchema.index({ assignedById: 1, assignedByRole: 1, createdAt: -1 });
 
 export const ShortAssignment = model<IShortAssignment>(
   "ShortAssignment",

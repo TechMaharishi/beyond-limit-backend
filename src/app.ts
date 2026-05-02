@@ -17,7 +17,7 @@ import popularCourseRouter from "@/routes/popular-course/popular-course";
 import assignCourseRouter from "@/routes/assign-course/assign-course";
 import deviceTokenRouter from "@/routes/notifications/device-tokens";
 import notificationsRouter from "@/routes/notifications/notifications";
-import assignShortsRouter from "@/routes/assign-shorts/assign-shorts";
+import assignShortsRouter from "@/routes/content-assign/assign-shorts";
 import cloudinaryWebhookRouter from "@/routes/webhooks/cloudinary";
 import cloudinaryUploadV1Router from "@/routes/webhooks/cloudinary-upload-v1";
 import profilesRouter from "@/routes/user/profiles";

@@ -1,7 +1,9 @@
 import { Schema, model, Document, Types } from "mongoose";
 
 export interface IShortVideoProgress extends Document {
-  userId: Types.ObjectId;
+  // For Admin / Trainer / Trainee: stores the user account ID.
+  // For User role: stores the active profile ID (each profile tracks independently).
+  trackingId: string;
   shortVideoId: Types.ObjectId;
   watchedSeconds: number;
   completed: boolean;
@@ -11,7 +13,7 @@ export interface IShortVideoProgress extends Document {
 
 const ShortVideoProgressSchema = new Schema<IShortVideoProgress>(
   {
-    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    trackingId: { type: String, required: true },
     shortVideoId: { type: Schema.Types.ObjectId, ref: "ShortVideo", required: true },
     watchedSeconds: { type: Number, required: true, default: 0, min: 0 },
     completed: { type: Boolean, required: true, default: false },
@@ -19,7 +21,7 @@ const ShortVideoProgressSchema = new Schema<IShortVideoProgress>(
   { timestamps: true }
 );
 
-ShortVideoProgressSchema.index({ userId: 1, shortVideoId: 1 }, { unique: true });
+ShortVideoProgressSchema.index({ trackingId: 1, shortVideoId: 1 }, { unique: true });
 
 export const ShortVideoProgress = model<IShortVideoProgress>(
   "ShortVideoProgress",

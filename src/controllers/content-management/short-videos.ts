@@ -790,7 +790,7 @@ export const trackShortVideoProgress = async (req: Request, res: Response, next:
     const cappedWatched = duration > 0 ? Math.min(watchedSeconds, duration) : watchedSeconds;
 
     const progress = await ShortVideoProgress.findOneAndUpdate(
-      { userId: trackingId, shortVideoId: id },
+      { trackingId, shortVideoId: id },
       { $max: { watchedSeconds: cappedWatched } },
       { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     );
@@ -835,7 +835,7 @@ export const getShortVideoProgress = async (req: Request, res: Response, next: N
     if (!video) return sendError(res, 404, "Short video not found");
 
     const duration = video.durationSeconds || 0;
-    const progress = await ShortVideoProgress.findOne({ userId: trackingId, shortVideoId: id });
+    const progress = await ShortVideoProgress.findOne({ trackingId, shortVideoId: id });
     const watched = progress?.watchedSeconds || 0;
     const completed = progress?.completed || false;
     const percentWatched = duration > 0 ? Math.min((watched / duration) * 100, 100) : 0;
@@ -921,7 +921,7 @@ export const listPublishedShortVideos = async (req: Request, res: Response, next
 
     const videoIds = videos.map((v: any) => String(v._id));
     const progressDocs = trackingId
-      ? await ShortVideoProgress.find({ userId: trackingId, shortVideoId: { $in: videoIds } })
+      ? await ShortVideoProgress.find({ trackingId, shortVideoId: { $in: videoIds } })
           .select("shortVideoId watchedSeconds completed")
           .lean()
       : [];
