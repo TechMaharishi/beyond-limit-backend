@@ -412,7 +412,9 @@ export const getMyAssignedCourses = async (
       return sendSuccess(res, 200, "No assignments", [], { page, offset, limit, total: 0, hasNext: false });
     }
 
-    const assignedByRoleFilter = isTrainee ? { $in: ["trainer", "admin"] } : { $in: ["trainer", "trainee", "admin"] };
+    const assignedByRoleFilter: { $in: import("@/models/course-assignment").AssignerRole[] } = isTrainee
+      ? { $in: ["trainer", "admin"] }
+      : { $in: ["trainer", "trainee", "admin"] };
     const assignments = await CourseAssignment.find({ assignedToId: (user as any).id, assignedByRole: assignedByRoleFilter })
       .sort({ createdAt: -1 })
       .lean();
