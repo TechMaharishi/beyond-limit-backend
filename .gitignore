@@ -46,4 +46,20 @@ media/
 # Added by code-review-graph
 .code-review-graph/
 
+# Agents and AI tools
+.agents/
+skills-lock.json
+.mcp.json
+.opencode.json
+.claude/
+.kiro/
+.qoder/
+.trae/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+QODER.md
+.cursorrules
+.windsurfrules
+
 src/config/serviceAccountKey.json
