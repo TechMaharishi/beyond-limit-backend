@@ -420,9 +420,12 @@ export const listShortVideosForManagement = async (req: Request, res: Response, 
     const mongoFilter = conditions.length > 1 ? { $and: conditions } : conditions[0] || {};
 
     const total = await ShortVideo.countDocuments(mongoFilter);
-    const data = await ShortVideo.find(mongoFilter)
-      .select("title description tags status thumbnailUrl accessLevel visibility durationSeconds createdAt updatedAt createdBy")
-      .sort(sort).skip(offset).limit(limit);
+    const docs = await ShortVideo.find(mongoFilter)
+      .select("title description tags status thumbnailUrl cloudinaryId accessLevel visibility durationSeconds createdAt updatedAt createdBy")
+      .sort(sort).skip(offset).limit(limit)
+      .lean();
+
+    const data = docs.map((doc: any) => ({ ...doc, videoReady: !!doc.cloudinaryId }));
 
     return sendSuccess(res, 200, "Short videos fetched", data, { page, offset, limit, total, hasNext: offset + data.length < total });
   } catch (error) {
@@ -1003,13 +1006,16 @@ export const updateShortVideoStatus = async (req: Request, res: Response, next: 
       if (!video.user.equals(user.id)) {
         return sendError(res, 403, "Forbidden: you can only change the status of your own videos");
       }
+      if (status === "pending" && !video.cloudinaryId) {
+        return sendError(res, 400, "Upload a video before submitting for review");
+      }
     }
 
     if (status === "rejected") {
       const reason = typeof rejectReason === "string" ? rejectReason.trim() : "";
       if (!reason) return sendError(res, 400, "rejectReason is required when status is 'rejected'");
       video.rejectReason = reason;
-    } else if (status === "published" && video.rejectReason) {
+    } else if ((status === "published" || status === "draft") && video.rejectReason) {
       video.rejectReason = "";
     }
 
