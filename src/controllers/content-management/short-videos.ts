@@ -326,6 +326,11 @@ export const removeShortVideoFile = async (req: Request, res: Response, next: Ne
     video.thumbnailUrl = "";
     video.durationSeconds = 0;
     (video as any).subtitles = [];
+    (video as any).subtitle_status = "pending";
+    (video as any).subtitle_failure_reason = null;
+    (video as any).subtitle_retry_count = 0;
+    (video as any).retryable = false;
+    (video as any).last_subtitle_attempt = null;
     await video.save();
     await ShortVideoProgress.deleteMany({ shortVideoId: id }).catch(() => {});
 
@@ -988,8 +993,8 @@ export const updateShortVideoStatus = async (req: Request, res: Response, next: 
     if (!status || typeof status !== "string") return sendError(res, 400, "Status is required");
 
     if (isAdmin) {
-      if (!["published", "rejected"].includes(status)) {
-        return sendError(res, 400, "Admin can only set status to 'published' or 'rejected'");
+      if (!["published", "rejected", "draft"].includes(status)) {
+        return sendError(res, 400, "Admin can only set status to 'published', 'rejected', or 'draft'");
       }
     } else {
       if (!["draft", "pending"].includes(status)) {
