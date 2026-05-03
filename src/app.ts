@@ -14,7 +14,7 @@ import courseVideosRouter from "@/routes/content-management/course-videos";
 import supportRouter from "@/routes/support/support";
 import assignClinicalRouter from "@/routes/assign-clinical/assign-clinical";
 import popularCourseRouter from "@/routes/popular-course/popular-course";
-import assignCourseRouter from "@/routes/assign-course/assign-course";
+import assignCourseRouter from "@/routes/content-assign/assign-course";
 import deviceTokenRouter from "@/routes/notifications/device-tokens";
 import notificationsRouter from "@/routes/notifications/notifications";
 import assignShortsRouter from "@/routes/content-assign/assign-shorts";

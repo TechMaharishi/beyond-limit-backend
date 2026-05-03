@@ -39,10 +39,9 @@ const ClinicalAssignmentSchema = new Schema<IClinicalAssignment>(
   { timestamps: true }
 );
 
-ClinicalAssignmentSchema.index(
-  { "clinicians.clinicianId": 1, "clinicians.clinicianRole": 1 },
-  { sparse: true }
-);
+// Supports $elemMatch queries on the clinicians array (getUsersAssignedToTrainee)
+ClinicalAssignmentSchema.index({ "clinicians.clinicianId": 1 });
+ClinicalAssignmentSchema.index({ "clinicians.clinicianRole": 1 });
 
 export const ClinicalAssignment = model<IClinicalAssignment>(
   "ClinicalAssignment",
