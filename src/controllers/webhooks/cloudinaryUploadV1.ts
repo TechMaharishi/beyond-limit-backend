@@ -65,10 +65,12 @@ function buildThumbnailUrl(publicId: string, durationSeconds: number): string {
 
 /**
  * Extracts the ShortVideo MongoDB _id from a Cloudinary public_id.
- * Expected format: "short-videos/<mongoId>"
+ * Supported formats:
+ *   "short-videos/<mongoId>"           — legacy single-upload format
+ *   "short-videos/<mongoId>/<timestamp>" — current unique-per-upload format
  */
 function extractShortVideoId(publicId: string): string | null {
-  const match = publicId.match(/^short-videos\/([a-f0-9]{24})$/);
+  const match = publicId.match(/^short-videos\/([a-f0-9]{24})(\/\d+)?$/);
   return match ? match[1] : null;
 }
 
@@ -113,6 +115,18 @@ export const handleCloudinaryUploadCompleteV1 = async (
     if (!video) {
       logger.warn(`[CloudinaryUploadV1] Short video not found for id: ${shortVideoId}`);
       return sendSuccess(res, 200, "Webhook acknowledged (video not found)");
+    }
+
+    // If this short already has a different Cloudinary asset (re-upload scenario),
+    // destroy the old one so it doesn't linger and cause stale CDN hits or subtitle webhooks.
+    const previousCloudinaryId = String((video as any).cloudinaryId || "").trim();
+    if (previousCloudinaryId && previousCloudinaryId !== publicId) {
+      try {
+        await cloudinary.uploader.destroy(previousCloudinaryId, { resource_type: "video", invalidate: true });
+        logger.info(`[CloudinaryUploadV1] Destroyed old asset: ${previousCloudinaryId}`);
+      } catch (e) {
+        logger.warn(`[CloudinaryUploadV1] Could not destroy old asset ${previousCloudinaryId}:`, e);
+      }
     }
 
     // Cloudinary upload payload fields

@@ -214,7 +214,9 @@ export const getSignedUploadUrl = async (
     }
 
     const timestamp = Math.round(Date.now() / 1000);
-    const publicId = `short-videos/${String(video._id)}`;
+    // Include timestamp in public_id so every re-upload gets a unique Cloudinary asset.
+    // Same public_id across uploads causes CDN cache hits (old stream) and stale subtitle webhooks.
+    const publicId = `short-videos/${String(video._id)}/${timestamp}`;
     const notificationUrl = `${appBaseUrl}/api/v1/webhooks/cloudinary/upload-complete`;
 
     const paramsToSign: Record<string, string | number> = {
