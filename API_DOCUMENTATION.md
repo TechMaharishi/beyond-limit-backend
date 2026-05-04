@@ -1446,3 +1446,148 @@ curl -X GET "http://localhost:5000/api/assign-shorts/assigned-by-me" \
 curl -X GET "http://localhost:5000/api/assign-shorts/assignees/user_123?profileId=prof_abc" \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
+---
+
+## 7. Assign Course Management
+**Source:** `src/routes/content-assign/assign-course.ts`
+
+### 7.1 Assign Course to User
+**Endpoint:** `POST /assign-course`
+- **Permissions Required:** `assignCourse: ["create"]`
+- **Description:** Assigns a published course to a specific user (trainee or user role). For `user` role accounts, `profileId` is mandatory.
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/assign-course" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "user_123",
+    "courseId": "69f2a3b4c5d6e7f8g9h0i1j2",
+    "profileId": "profile_abc"
+  }'
+```
+
+**Response Example (201 Created):**
+```json
+{
+  "success": true,
+  "status": 201,
+  "message": "Course assigned"
+}
+```
+
+### 7.2 Bulk Assign Courses
+**Endpoint:** `POST /assign-course/bulk`
+- **Permissions Required:** `assignCourse: ["create"]`
+- **Description:** Assigns multiple courses to multiple users. Max 200 items.
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/assign-course/bulk" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      { "userId": "user_1", "courseId": "course_a", "profileId": "prof_1" },
+      { "userId": "user_2", "courseId": "course_b" }
+    ]
+  }'
+```
+
+**Response Example (201 Created):**
+```json
+{
+  "success": true,
+  "status": 201,
+  "message": "Bulk assignment processed",
+  "data": {
+    "successes": 2,
+    "failures": 0,
+    "results": [
+      { "userId": "user_1", "courseId": "course_a", "profileId": "prof_1", "status": "assigned" },
+      { "userId": "user_2", "courseId": "course_b", "status": "alreadyAssigned" }
+    ]
+  }
+}
+```
+
+### 7.3 Remove Course Assignment
+**Endpoint:** `DELETE /assign-course`
+- **Permissions Required:** `assignCourse: ["delete"]`
+- **Description:** Unassigns a course from a user.
+
+**cURL Example:**
+```bash
+curl -X DELETE "http://localhost:5000/api/assign-course" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "user_123",
+    "courseId": "69f2a3b4c5d6e7f8g9h0i1j2",
+    "profileId": "profile_abc"
+  }'
+```
+
+### 7.4 Bulk Remove Course Assignments
+**Endpoint:** `DELETE /assign-course/bulk`
+- **Permissions Required:** `assignCourse: ["delete"]`
+
+**cURL Example:**
+```bash
+curl -X DELETE "http://localhost:5000/api/assign-course/bulk" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      { "userId": "user_1", "courseId": "course_a" },
+      { "userId": "user_2", "courseId": "course_b" }
+    ]
+  }'
+```
+
+### 7.5 List My Assigned Courses
+**Endpoint:** `GET /assign-course/me`
+- **Description:** Retrieves courses assigned to the current user (or active profile). Includes course metadata and aggregated progress (lessons + quizzes).
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/assign-course/me?page=1&limit=10" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "status": 200,
+  "message": "My assigned courses fetched",
+  "data": [
+    {
+      "course": { "_id": "...", "title": "Clinical Basics", "thumbnailUrl": "..." },
+      "assignedBy": { "id": "...", "name": "Jane Trainer", "role": "trainer" },
+      "progressSummary": { "percentCompleted": 45.5, "completed": false }
+    }
+  ]
+}
+```
+
+### 7.6 List Courses Assigned By Me
+**Endpoint:** `GET /assign-course/assigned-by-me`
+- **Permissions Required:** `assignCourse: ["view"]`
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/assign-course/assigned-by-me" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### 7.7 List Course Assignments for a Specific User
+**Endpoint:** `GET /assign-course/assignees/:userId`
+- **Permissions Required:** `assignCourse: ["view"]`
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/assign-course/assignees/user_123?profileId=prof_abc" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```

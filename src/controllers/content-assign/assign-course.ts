@@ -17,7 +17,9 @@ import { sendLearningAssignmentEmail } from "@/utils/mailer";
 const MAX_PAGE_SIZE = 100;
 
 function resolveAssignerRole(role: string): CourseAssignerRole {
-  return role === "trainer" ? "trainer" : "admin";
+  if (role === "trainer") return "trainer";
+  if (role === "trainee") return "trainee";
+  return "admin";
 }
 
 function parsePagination(query: Record<string, any>): { limit: number; page: number; offset: number } {
@@ -210,9 +212,6 @@ export const createCourseAssignment = async (req: Request, res: Response, next: 
     if (!canCreate?.success) return sendError(res, 403, "Forbidden");
 
     const role = String((user as any).role || "");
-    const isAdmin = role === "admin";
-    const isTrainer = role === "trainer";
-    if (!isAdmin && !isTrainer) return sendError(res, 403, "Only admins and trainers can assign courses");
 
     const { userId, courseId, profileId } = req.body as {
       userId?: string;
@@ -296,9 +295,6 @@ export const createCourseAssignmentsBulk = async (req: Request, res: Response, n
     if (!canCreate?.success) return sendError(res, 403, "Forbidden");
 
     const role = String((user as any).role || "");
-    const isAdmin = role === "admin";
-    const isTrainer = role === "trainer";
-    if (!isAdmin && !isTrainer) return sendError(res, 403, "Only admins and trainers can assign courses");
 
     const items: Array<{ userId?: string; courseId?: string; profileId?: string }> =
       Array.isArray(req.body?.items) ? req.body.items : [];
@@ -451,7 +447,6 @@ export const deleteCourseAssignment = async (req: Request, res: Response, next: 
     if (!canDelete?.success) return sendError(res, 403, "Forbidden");
 
     const role = String((user as any).role || "");
-    const isAdmin = role === "admin";
 
     const { userId, courseId, profileId } = req.body as {
       userId?: string;
@@ -461,18 +456,13 @@ export const deleteCourseAssignment = async (req: Request, res: Response, next: 
     if (!userId || !courseId) return sendError(res, 400, "userId and courseId are required");
 
     const resolvedProfileId = profileId || "";
-    let filter: Record<string, any>;
-    if (isAdmin) {
-      filter = { assignedToId: userId, courseId, profileId: resolvedProfileId };
-    } else {
-      filter = {
-        assignedToId: userId,
-        courseId,
-        profileId: resolvedProfileId,
-        assignedById: String((user as any).id),
-        assignedByRole: resolveAssignerRole(role),
-      };
-    }
+    const filter: Record<string, any> = {
+      assignedToId: userId,
+      courseId,
+      profileId: resolvedProfileId,
+      assignedById: String((user as any).id),
+      assignedByRole: resolveAssignerRole(role),
+    };
 
     const result = await CourseAssignment.deleteOne(filter);
     if (result.deletedCount === 0) return sendError(res, 404, "Assignment not found");
@@ -496,27 +486,22 @@ export const deleteCourseAssignmentsBulk = async (req: Request, res: Response, n
     if (!canDelete?.success) return sendError(res, 403, "Forbidden");
 
     const role = String((user as any).role || "");
-    const isAdmin = role === "admin";
 
     const items: Array<{ userId?: string; courseId?: string; profileId?: string }> =
       Array.isArray(req.body?.items) ? req.body.items : [];
     if (items.length === 0) return sendError(res, 400, "items array is required");
     if (items.length > 200) return sendError(res, 400, "Maximum 200 items per request");
 
+    const assignedByRole = resolveAssignerRole(role);
     const conditions = items
       .filter((it) => typeof it?.userId === "string" && typeof it?.courseId === "string" && it.userId && it.courseId)
-      .map((it) => {
-        const base: Record<string, any> = {
-          assignedToId: it.userId!,
-          courseId: it.courseId!,
-          profileId: it.profileId || "",
-        };
-        if (!isAdmin) {
-          base.assignedById = String((user as any).id);
-          base.assignedByRole = resolveAssignerRole(role);
-        }
-        return base;
-      });
+      .map((it) => ({
+        assignedToId: it.userId!,
+        courseId: it.courseId!,
+        profileId: it.profileId || "",
+        assignedById: String((user as any).id),
+        assignedByRole,
+      }));
 
     if (conditions.length === 0) return sendError(res, 400, "No valid items provided");
 
@@ -540,9 +525,6 @@ export const listCourseAssignmentsForUser = async (req: Request, res: Response, 
     if (!canView?.success) return sendError(res, 403, "Forbidden");
 
     const role = String((user as any).role || "");
-    const isAdmin = role === "admin";
-    const isTrainer = role === "trainer";
-    if (!isAdmin && !isTrainer) return sendError(res, 403, "Only admins and trainers can view assignments for a user");
 
     const { userId } = req.params as { userId: string };
     const profileId = typeof req.query.profileId === "string" ? req.query.profileId : undefined;
@@ -681,9 +663,6 @@ export const listCourseAssignmentsByMe = async (req: Request, res: Response, nex
     if (!canView?.success) return sendError(res, 403, "Forbidden");
 
     const role = String((user as any).role || "");
-    const isAdmin = role === "admin";
-    const isTrainer = role === "trainer";
-    if (!isAdmin && !isTrainer) return sendError(res, 403, "Only admins and trainers can view their assignments");
 
     const { limit, page, offset } = parsePagination(req.query as any);
     const assignedByRole = resolveAssignerRole(role);

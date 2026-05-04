@@ -4,9 +4,12 @@ import dns from 'node:dns';
 
 // async function runMigrations() {
 //   try {
-//     const col = mongoose.connection.collection("short-assignments");
-//     // Drop the old unique index that lacked profileId — it prevents assigning the same short to different profiles
-//     await col.dropIndex("assignedToId_1_shortVideoId_1_assignedByRole_1").catch(() => {});
+//     // Drop old unique indexes that lacked profileId — they prevent assigning the same content to different profiles.
+//     // Safe to re-run: dropIndex is a no-op if the index no longer exists.
+//     await mongoose.connection.collection("short-assignments")
+//       .dropIndex("assignedToId_1_shortVideoId_1_assignedByRole_1").catch(() => {});
+//     await mongoose.connection.collection("course-assignments")
+//       .dropIndex("assignedToId_1_courseId_1_assignedByRole_1").catch(() => {});
 //   } catch {}
 // }
 
@@ -37,7 +40,7 @@ export const connectDB = async () => {
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : 'Unknown database error';
-      logger.error('Failed to connect to MongoDB', { error: message });
+    logger.error('Failed to connect to MongoDB', { error: message });
 
     if (process.env.NODE_ENV === 'production') {
       logger.warn('Retrying database connection in 5 seconds...');

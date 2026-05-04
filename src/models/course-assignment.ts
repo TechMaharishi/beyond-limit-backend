@@ -1,6 +1,6 @@
 import { Schema, model, Document, Types } from "mongoose";
 
-export type CourseAssignerRole = "trainer" | "admin";
+export type CourseAssignerRole = "trainer" | "trainee" | "admin";
 
 export interface ICourseAssignment extends Document {
   courseId: Types.ObjectId;
@@ -19,7 +19,7 @@ const CourseAssignmentSchema = new Schema<ICourseAssignment>(
     assignedToId: { type: String, required: true, index: true },
     profileId: { type: String, default: "" },
     assignedById: { type: String, required: true, index: true },
-    assignedByRole: { type: String, enum: ["trainer", "admin"], required: true },
+    assignedByRole: { type: String, enum: ["trainer", "trainee", "admin"], required: true },
     assignedByName: { type: String, default: "" },
   },
   { timestamps: true }
