@@ -245,26 +245,18 @@ export const deleteShortAssignment = async (req: Request, res: Response, next: N
     if (!userId || !shortVideoId) return sendError(res, 400, "userId and shortVideoId are required");
     if (!isValidObjectId(shortVideoId)) return sendError(res, 400, "shortVideoId is not a valid ObjectId");
 
-    let deletedCount = 0;
-    if (isAdmin) {
-      // Admin removes all assignments for this user+video (optionally scoped to a profile)
-      const filter: any = { assignedToId: userId, shortVideoId };
-      if (profileId) filter.profileId = profileId;
-      const result = await ShortAssignment.deleteMany(filter);
-      deletedCount = result.deletedCount || 0;
-    } else {
-      // Trainer/trainee: always include profileId (defaults to "") so they can't
-      // accidentally delete across multiple user profiles in one call
-      const filter: any = {
-        assignedToId: userId,
-        shortVideoId,
-        assignedById: (user as any).id,
-        assignedByRole,
-        profileId: profileId || "",
-      };
-      const result = await ShortAssignment.deleteOne(filter);
-      deletedCount = result.deletedCount || 0;
-    }
+    // All roles (admin, trainer, trainee) can only unassign what they personally assigned
+    const filter: any = {
+      assignedToId: userId,
+      shortVideoId,
+      assignedById: (user as any).id,
+      assignedByRole,
+    };
+    if (profileId) filter.profileId = profileId;
+    else if (!isAdmin) filter.profileId = "";
+
+    const result = await ShortAssignment.deleteOne(filter);
+    const deletedCount = result.deletedCount || 0;
 
     if (deletedCount === 0) return sendError(res, 404, "No assignment found to remove");
 
@@ -318,13 +310,9 @@ export const deleteShortAssignmentsBulk = async (req: Request, res: Response, ne
       }
 
       const cond: DeleteCondition = { assignedToId: userId, shortVideoId };
-      if (isAdmin) {
-        // Admin: profileId scopes the delete; absence means delete all profiles for this user+video
-        if (profileId) cond.profileId = profileId;
-      } else {
-        // Non-admin: always pin profileId (default "") to prevent accidental cross-profile deletion
-        cond.profileId = profileId || "";
-      }
+      // Always pin profileId — prevents accidental cross-profile deletion for all roles
+      if (profileId) cond.profileId = profileId;
+      else if (!isAdmin) cond.profileId = "";
       conditions.push(cond);
     }
 
@@ -332,13 +320,12 @@ export const deleteShortAssignmentsBulk = async (req: Request, res: Response, ne
       return sendError(res, 400, "No valid items to unassign", { invalid });
     }
 
-    // Single deleteMany with $or — one DB round-trip
-    const filter: any = { $or: conditions };
-    if (!isAdmin) {
-      // Trainer/trainee can only remove their own assignments
-      filter.assignedById = (user as any).id;
-      filter.assignedByRole = assignedByRole;
-    }
+    // All roles (admin, trainer, trainee) can only remove assignments they personally created
+    const filter: any = {
+      $or: conditions,
+      assignedById: (user as any).id,
+      assignedByRole,
+    };
 
     const result = await ShortAssignment.deleteMany(filter);
 

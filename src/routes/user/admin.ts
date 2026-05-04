@@ -1,5 +1,5 @@
 import express from "express";
-import { CreateRolebaseUser, ListUser, ListUserBadPagination, SetUserRole, ResetUserPassword, BanUser, UnbanUser, DeleteUser, DeleteUsersBulk, UpdateUser, AdminListProfiles, AdminCreateProfile, AdminUpdateProfile, AdminDeleteProfile } from "@/controllers/user/admin";
+import { CreateRolebaseUser, ListUser, ListUserBadPagination, SetUserRole, ResetUserPassword, BanUser, UnbanUser, DeleteUser, DeleteUsersBulk, UpdateUser, AdminListProfiles, AdminCreateProfile, AdminUpdateProfile, AdminDeleteProfile, ListUserProfiles } from "@/controllers/user/admin";
 
 
 const superAdminRouter = express.Router();
@@ -19,5 +19,7 @@ superAdminRouter.get("/admin/profiles", AdminListProfiles);
 superAdminRouter.post("/admin/profiles", AdminCreateProfile);
 superAdminRouter.patch("/admin/profiles/:profileId", AdminUpdateProfile);
 superAdminRouter.delete("/admin/profiles/:profileId", AdminDeleteProfile);
+
+superAdminRouter.get("/admin/user-profiles", ListUserProfiles);
 
 export default superAdminRouter;

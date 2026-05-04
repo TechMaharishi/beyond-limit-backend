@@ -599,3 +599,25 @@ export const AdminDeleteProfile = async (req: Request, res: Response, next: Next
     return res.status(200).json({ data: { deleted: true } });
   } catch (err) { next(err); }
 };
+
+// ─── ListUserProfiles ─────────────────────────────────────────────────────────
+// Read-only profile lookup for trainer/trainee/admin — needed when assigning
+// content to a user account so the caller can pick a valid profileId.
+
+export const ListUserProfiles = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const perm = await auth.api.userHasPermission({
+      body: { permissions: { profile: ["view"] } },
+      headers: apiHeaders,
+    });
+    if (!perm?.success) return res.status(403).json({ message: "Forbidden" });
+
+    const userId = typeof req.query.userId === "string" ? req.query.userId.trim() : "";
+    if (!userId) return res.status(400).json({ message: "userId query param is required" });
+    if (!(await assertTargetIsUserRole(userId, res))) return;
+
+    const profiles = await Profile.find({ userId }).select("_id name avatar isDefault createdAt").sort({ createdAt: 1 }).lean();
+    return res.status(200).json({ data: profiles });
+  } catch (err) { next(err); }
+};
