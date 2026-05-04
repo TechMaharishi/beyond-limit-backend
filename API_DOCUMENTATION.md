@@ -1299,3 +1299,150 @@ curl -X POST "http://localhost:5000/api/short-videos/69f2a3b4c5d6e7f8g9h0i1j2/re
   }
 }
 ```
+---
+
+## 6. Assign Shorts Management
+**Source:** `src/routes/content-assign/assign-shorts.ts`
+
+### 6.1 Assign Short Video to User
+**Endpoint:** `POST /assign-shorts`
+- **Permissions Required:** `assignShorts: ["create"]`
+- **Description:** Assigns a published short video to a specific user. For accounts with the `user` role, a `profileId` is required.
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/assign-shorts" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "user_123",
+    "shortVideoId": "69f2a3b4c5d6e7f8g9h0i1j2",
+    "profileId": "profile_abc"
+  }'
+```
+
+**Response Example (201 Created):**
+```json
+{
+  "success": true,
+  "status": 201,
+  "message": "Short assigned to user"
+}
+```
+
+### 6.2 Bulk Assign Shorts
+**Endpoint:** `POST /assign-shorts/bulk`
+- **Permissions Required:** `assignShorts: ["create"]`
+- **Description:** Assigns multiple videos to multiple users in a single request. Max 200 items.
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/assign-shorts/bulk" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      { "userId": "user_1", "shortVideoId": "video_a", "profileId": "prof_1" },
+      { "userId": "user_2", "shortVideoId": "video_b" }
+    ]
+  }'
+```
+
+**Response Example (201 Created):**
+```json
+{
+  "success": true,
+  "status": 201,
+  "message": "Bulk assignment processed",
+  "data": {
+    "successes": 2,
+    "failures": 0,
+    "results": [
+      { "userId": "user_1", "shortVideoId": "video_a", "status": "assigned" },
+      { "userId": "user_2", "shortVideoId": "video_b", "status": "alreadyAssigned" }
+    ]
+  }
+}
+```
+
+### 6.3 Remove Short Assignment
+**Endpoint:** `DELETE /assign-shorts`
+- **Permissions Required:** `assignShorts: ["delete"]`
+- **Description:** Removes a video assignment. Admins can remove any assignment; trainers/trainees can only remove assignments they created.
+
+**cURL Example:**
+```bash
+curl -X DELETE "http://localhost:5000/api/assign-shorts" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "user_123",
+    "shortVideoId": "69f2a3b4c5d6e7f8g9h0i1j2",
+    "profileId": "profile_abc"
+  }'
+```
+
+### 6.4 Bulk Remove Short Assignments
+**Endpoint:** `DELETE /assign-shorts/bulk`
+- **Permissions Required:** `assignShorts: ["delete"]`
+
+**cURL Example:**
+```bash
+curl -X DELETE "http://localhost:5000/api/assign-shorts/bulk" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      { "userId": "user_1", "shortVideoId": "video_a" },
+      { "userId": "user_2", "shortVideoId": "video_b" }
+    ]
+  }'
+```
+
+### 6.5 List My Assigned Shorts
+**Endpoint:** `GET /assign-shorts/me`
+- **Description:** Retrieves shorts assigned to the current authenticated user (or active profile). Includes video details and watch progress.
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/assign-shorts/me?page=1&limit=10" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "status": 200,
+  "message": "My assigned shorts fetched",
+  "data": [
+    {
+      "short": { "_id": "...", "title": "Safety 101", "thumbnailUrl": "..." },
+      "assignedBy": { "id": "...", "name": "Admin", "role": "admin" },
+      "progress": { "watchedSeconds": 45, "percentCompleted": 30, "completed": false }
+    }
+  ]
+}
+```
+
+### 6.6 List Shorts Assigned By Me
+**Endpoint:** `GET /assign-shorts/assigned-by-me`
+- **Permissions Required:** `assignShorts: ["view"]`
+- **Description:** Retrieves a list of assignments created by the current user.
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/assign-shorts/assigned-by-me" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### 6.7 List Assignments for a Specific User
+**Endpoint:** `GET /assign-shorts/assignees/:userId`
+- **Permissions Required:** `assignShorts: ["view"]`
+- **Description:** Retrieves assignments for a target user. Useful for trainers to monitor trainee progress.
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/admin/assign-shorts/assignees/user_123?profileId=prof_abc" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
