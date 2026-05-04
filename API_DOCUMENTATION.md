@@ -1443,6 +1443,6 @@ curl -X GET "http://localhost:5000/api/assign-shorts/assigned-by-me" \
 
 **cURL Example:**
 ```bash
-curl -X GET "http://localhost:5000/api/admin/assign-shorts/assignees/user_123?profileId=prof_abc" \
+curl -X GET "http://localhost:5000/api/assign-shorts/assignees/user_123?profileId=prof_abc" \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```

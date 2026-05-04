@@ -2,6 +2,14 @@ import mongoose from 'mongoose';
 import logger from '@/utils/logger';
 import dns from 'node:dns';
 
+// async function runMigrations() {
+//   try {
+//     const col = mongoose.connection.collection("short-assignments");
+//     // Drop the old unique index that lacked profileId — it prevents assigning the same short to different profiles
+//     await col.dropIndex("assignedToId_1_shortVideoId_1_assignedByRole_1").catch(() => {});
+//   } catch {}
+// }
+
 // Override the default DNS resolver for this process to use public Google/Cloudflare DNS.
 // This fixes the "querySrv ECONNREFUSED" error on ISPs or routers that block SRV queries.
 dns.setServers(['8.8.8.8', '1.1.1.1']);
@@ -25,6 +33,7 @@ export const connectDB = async () => {
       throw new Error('Database connection string is missing');
     }
     await mongoose.connect(MONGO_URI);
+    // await runMigrations();
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : 'Unknown database error';
