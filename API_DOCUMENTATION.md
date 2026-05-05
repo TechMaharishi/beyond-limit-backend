@@ -1591,3 +1591,199 @@ curl -X GET "http://localhost:5000/api/assign-course/assigned-by-me" \
 curl -X GET "http://localhost:5000/api/assign-course/assignees/user_123?profileId=prof_abc" \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
+
+---
+
+## 8. Notifications & Device Tokens
+
+This section details the APIs for managing in-app push notifications, registering device tokens for external push services (FCM/Expo), and interacting with the user's notification inbox.
+
+**Notification Structure**
+Notifications in the backend are stored in MongoDB with an automatic TTL of 30 days (`expireAfterSeconds: 2592000`).
+```json
+{
+  "_id": "69f992...",
+  "userId": "user_id_string",
+  "title": "New Course Assigned",
+  "body": "You have been assigned to course: Advanced JS",
+  "data": {
+    "_id": "course_id_string",
+    "event": "course-assigned" 
+  },
+  "read": false,
+  "createdAt": "2026-05-05T06:45:43.851Z",
+  "updatedAt": "2026-05-05T06:45:43.851Z"
+}
+```
+
+**Common Notification Triggers (Events)**
+1. **Support Tickets** (`support-ticket-created`): Triggered to admins when a user submits a support ticket.
+2. **Clinical Assignments** (`clinical-assigned`): Triggered when a trainee is assigned to a clinical.
+3. **Course Assignments** (`course-assigned`): Triggered when a user/profile is assigned a new course.
+4. **Course Videos** (`course-video-added`): Triggered when new videos are added to an enrolled course.
+5. **Short Video Assignments** (`short-assigned`): Triggered when a user/profile is assigned a new short video.
+6. **Short Videos** (`short-video-status`): Triggered on various lifecycle events of short videos.
+
+### 8.1 Register Device Token
+**Endpoint:** `POST /notifications/tokens-register`
+- **Description:** Registers or updates a user's device token for push notifications (FCM or Expo).
+- **Authentication:** Bearer Token
+
+**Request Body:**
+```json
+{
+  "deviceToken": "ExponentPushToken[...]",
+  "deviceType": "ios" // "ios" | "android" | "web"
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/notifications/tokens-register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -d '{"deviceToken": "ExponentPushToken[12345]", "deviceType": "android"}'
+```
+
+**Response (201 Created / 200 OK):**
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "message": "Device token registered",
+  "data": {
+    "userId": "user_123",
+    "deviceToken": "ExponentPushToken[12345]",
+    "deviceType": "android"
+  }
+}
+```
+
+### 8.2 Deregister Device Token
+**Endpoint:** `POST /notifications/tokens-deregister`
+- **Description:** Removes a user's device token, stopping further push notifications to that device.
+- **Authentication:** Bearer Token
+
+**Request Body:**
+```json
+{
+  "deviceToken": "ExponentPushToken[12345]"
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/notifications/tokens-deregister" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -d '{"deviceToken": "ExponentPushToken[12345]"}'
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Device token removed"
+}
+```
+
+### 8.3 List Notifications
+**Endpoint:** `GET /notifications`
+- **Description:** Retrieves the authenticated user's notification inbox, sorted by newest first.
+- **Query Parameters:**
+  - `read` (boolean, optional): Filter by read status (`true` or `false`).
+  - `limit` (number, optional): Max notifications to fetch (defaults to 50, max 100).
+- **Authentication:** Bearer Token
+
+**cURL Example:**
+```bash
+curl -X GET "http://localhost:5000/api/notifications?read=false&limit=20" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Notifications fetched",
+  "data": [
+    {
+      "_id": "notif_123",
+      "title": "New support ticket",
+      "body": "Subject: Login issue",
+      "data": { "type": "app-technical-support", "event": "support-ticket-created" },
+      "read": false,
+      "createdAt": "2026-05-05T06:45:43.851Z"
+    }
+  ]
+}
+```
+
+### 8.4 Mark Notification as Read
+**Endpoint:** `POST /notifications/:id/read`
+- **Description:** Marks a specific notification as read.
+- **Authentication:** Bearer Token
+
+**cURL Example:**
+```bash
+curl -X POST "http://localhost:5000/api/notifications/notif_123/read" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Notification marked as read",
+  "data": {
+    "_id": "notif_123",
+    "read": true
+  }
+}
+```
+
+### 8.5 Delete a Single Notification
+**Endpoint:** `DELETE /notifications/:id`
+- **Description:** Deletes a specific notification.
+- **Authentication:** Bearer Token
+
+**cURL Example:**
+```bash
+curl -X DELETE "http://localhost:5000/api/notifications/notif_123" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Notification deleted"
+}
+```
+
+### 8.6 Clear All Notifications
+**Endpoint:** `DELETE /notifications`
+- **Description:** Deletes all notifications for the authenticated user.
+- **Authentication:** Bearer Token
+
+**cURL Example:**
+```bash
+curl -X DELETE "http://localhost:5000/api/notifications" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Notifications cleared",
+  "data": {
+    "deleted": 5
+  }
+}
+```

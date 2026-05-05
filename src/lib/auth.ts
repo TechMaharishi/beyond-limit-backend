@@ -74,15 +74,13 @@ export const auth = betterAuth({
     deleteUser: {
       enabled: true,
       beforeDelete: async (user) => {
-        if (user.email.includes("admin")) {
+        const isAdminRole = (user as any).role === "admin";
+        const isAdminById = ADMIN_USER_IDS.includes(String(user.id));
+        if (isAdminRole || isAdminById) {
           throw new APIError("BAD_REQUEST", {
             message: "Admin accounts can't be deleted",
           });
         }
-        // Clean up all profiles belonging to this user before the account is removed.
-        // Covers both single delete and bulk delete flows since both go through removeUser.
-        // We log failures but do not block deletion — an undeleteable account is worse
-        // than an orphan profile document that admin can clean up manually.
         try {
           const { Profile } = await import("@/models/profile");
           await Profile.deleteMany({ userId: user.id });
@@ -94,9 +92,9 @@ export const auth = betterAuth({
   },
   rateLimit: {
     enabled: true,
-    window: 60,   // 60-second rolling window
-    max: 20,      // max 20 auth requests per IP per window
-    storage: "memory",
+    window: 60,
+    max: 20,
+    storage: "database",
   },
   plugins: [
     adminPlugin({
@@ -153,7 +151,6 @@ export const auth = betterAuth({
             console.error("[databaseHooks] Failed to auto-create profile:", err);
           }
 
-          // Welcome Email & Mailchimp integration
           try {
             const firstName = user.name ? user.name.trim() : undefined;
             await sendWelcomeEmail({ to: user.email, firstName });
@@ -174,12 +171,16 @@ export const auth = betterAuth({
   },
   trustedOrigins: [process.env.CLIENT_ORIGIN1, process.env.CLIENT_ORIGIN2, "http://localhost:5173", "https://blpt-web.vercel.app"],
   advanced: {
-        defaultCookieAttributes: {
-            sameSite: "none", 
-            secure: true,
-            partitioned: true
-        }
-    }
+    useSecureCookies: process.env.NODE_ENV === "production",
+    ipAddress: {
+      ipAddressHeaders: ["x-forwarded-for", "x-real-ip"],
+    },
+    defaultCookieAttributes: {
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      secure: process.env.NODE_ENV === "production",
+      partitioned: process.env.NODE_ENV === "production",
+    },
+  }
 });
 
 export type Session = typeof auth.$Infer.Session;
