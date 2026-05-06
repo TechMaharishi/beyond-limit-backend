@@ -4,7 +4,7 @@ import { admin as adminPlugin } from "better-auth/plugins/admin";
 import { jwt } from "better-auth/plugins/jwt";
 import { bearer } from "better-auth/plugins/bearer";
 import { emailOTP } from "better-auth/plugins/email-otp";
-import { dash } from "@better-auth/infra";
+import { dash, sentinel } from "@better-auth/infra";
 import { MongoClient } from "mongodb";
 import {
   sendPasswordResetSuccessEmail,
@@ -136,7 +136,8 @@ export const auth = betterAuth({
       storeOTP: "hashed",
     }),
     expo(),
-    dash()
+    dash(),
+    sentinel()
   ],
   databaseHooks: {
     user: {
