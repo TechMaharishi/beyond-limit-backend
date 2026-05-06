@@ -138,7 +138,6 @@ export const auth = betterAuth({
     expo(),
     dash({
       activityTracking: {
-        trackingCookies: ["access_token", "refresh_token", "session_token"],
         enabled: true,
         updateInterval: 300000,
       }
