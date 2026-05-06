@@ -129,35 +129,33 @@ export const assignTraineeToUser = async (
         { arrayFilters: [{ "c.clinicianId": clinicianId, "c.clinicianRole": clinicianRole }] }
       );
     } else {
-      // Atomic add: filter prevents concurrent over-push (> 5) or duplicate
-      // If another request sneaks in and fills the 5th slot, the upsert will hit a
-      // duplicate-key error (userId unique index) — we catch E11000 and surface a
-      // clean 400 instead of a 500.
-      try {
-        await ClinicalAssignment.findOneAndUpdate(
-          {
-            userId,
-            $expr: { $lt: [{ $size: { $ifNull: ["$clinicians", []] } }, 5] },
-            clinicians: { $not: { $elemMatch: { clinicianId, clinicianRole } } },
-          },
-          {
-            $push: {
-              clinicians: {
-                clinicianId,
-                clinicianRole,
-                clinicianEmail: clinicianEmail.trim(),
-                clinicianName: clinicianName.trim(),
-              },
+      // Step 1: ensure the document exists for this userId (safe no-op if already exists)
+      await ClinicalAssignment.updateOne(
+        { userId },
+        { $setOnInsert: { userId, clinicians: [] } },
+        { upsert: true }
+      );
+      // Step 2: push the new clinician — $expr and $elemMatch are safe here because
+      // the document is guaranteed to exist, so no upsert path is triggered
+      const pushResult = await ClinicalAssignment.updateOne(
+        {
+          userId,
+          $expr: { $lt: [{ $size: { $ifNull: ["$clinicians", []] } }, 5] },
+          clinicians: { $not: { $elemMatch: { clinicianId, clinicianRole } } },
+        },
+        {
+          $push: {
+            clinicians: {
+              clinicianId,
+              clinicianRole,
+              clinicianEmail: clinicianEmail.trim(),
+              clinicianName: clinicianName.trim(),
             },
           },
-          { upsert: true }
-        );
-      } catch (e: any) {
-        if (e.code === 11000) {
-          // Concurrent request filled the last slot or added the same clinician
-          return sendError(res, 400, "Maximum clinicians reached or clinician already assigned");
         }
-        throw e;
+      );
+      if (pushResult.matchedCount === 0) {
+        return sendError(res, 400, "Maximum clinicians reached or clinician already assigned");
       }
     }
 
