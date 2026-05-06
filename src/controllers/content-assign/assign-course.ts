@@ -455,14 +455,15 @@ export const deleteCourseAssignment = async (req: Request, res: Response, next: 
     };
     if (!userId || !courseId) return sendError(res, 400, "userId and courseId are required");
 
+    const isAdmin = role === "admin";
     const resolvedProfileId = profileId || "";
-    const filter: Record<string, any> = {
-      assignedToId: userId,
-      courseId,
-      profileId: resolvedProfileId,
-      assignedById: String((user as any).id),
-      assignedByRole: resolveAssignerRole(role),
-    };
+
+    // Admin can unassign any assignment; trainer/trainee only their own
+    const filter: Record<string, any> = { assignedToId: userId, courseId, profileId: resolvedProfileId };
+    if (!isAdmin) {
+      filter.assignedById = String((user as any).id);
+      filter.assignedByRole = resolveAssignerRole(role);
+    }
 
     const result = await CourseAssignment.deleteOne(filter);
     if (result.deletedCount === 0) return sendError(res, 404, "Assignment not found");
@@ -492,20 +493,25 @@ export const deleteCourseAssignmentsBulk = async (req: Request, res: Response, n
     if (items.length === 0) return sendError(res, 400, "items array is required");
     if (items.length > 200) return sendError(res, 400, "Maximum 200 items per request");
 
-    const assignedByRole = resolveAssignerRole(role);
+    const isAdmin = role === "admin";
     const conditions = items
       .filter((it) => typeof it?.userId === "string" && typeof it?.courseId === "string" && it.userId && it.courseId)
       .map((it) => ({
         assignedToId: it.userId!,
         courseId: it.courseId!,
         profileId: it.profileId || "",
-        assignedById: String((user as any).id),
-        assignedByRole,
       }));
 
     if (conditions.length === 0) return sendError(res, 400, "No valid items provided");
 
-    const result = await CourseAssignment.deleteMany({ $or: conditions });
+    // Admin can unassign any assignment; trainer/trainee only their own
+    const deleteFilter: Record<string, any> = { $or: conditions };
+    if (!isAdmin) {
+      deleteFilter.assignedById = String((user as any).id);
+      deleteFilter.assignedByRole = resolveAssignerRole(role);
+    }
+
+    const result = await CourseAssignment.deleteMany(deleteFilter);
     return sendSuccess(res, 200, "Bulk unassign completed", { deletedCount: result.deletedCount });
   } catch (error) {
     next(error);

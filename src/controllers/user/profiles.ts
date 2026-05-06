@@ -7,6 +7,8 @@ import {
   clearSessionActiveProfile,
   clearProfileFromAllSessions,
 } from "@/lib/profile-session";
+import cloudinary from "@/config/cloudinary";
+import type { UploadApiResponse } from "cloudinary";
 
 const MAX_PROFILES = 5;
 
@@ -160,5 +162,67 @@ export const SwitchProfile = async (req: Request, res: Response, next: NextFunct
     await setSessionActiveProfile(token, profileId);
 
     return res.status(200).json({ data: { activeProfileId: profileId } });
+  } catch (err) { next(err); }
+};
+
+export const UploadProfileAvatar = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    if (!session?.user) return res.status(401).json({ message: "Unauthorized" });
+    if (!requireUserRole(session, res)) return;
+
+    const userId = (session.user as any).id as string;
+    const { profileId } = req.params;
+
+    const profile = await Profile.findById(profileId);
+    if (!profile) return res.status(404).json({ message: "Profile not found" });
+    if (profile.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) return res.status(400).json({ message: "No file uploaded. Use field 'image'" });
+    if (!file.mimetype?.startsWith("image/")) return res.status(400).json({ message: "Invalid file type. Only images are allowed" });
+
+    const uploadResult: UploadApiResponse = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "profile-avatars", public_id: String(profile._id), overwrite: true, resource_type: "image" },
+        (error, result) => {
+          if (error) return reject(error);
+          if (!result) return reject(new Error("Upload failed"));
+          resolve(result as UploadApiResponse);
+        }
+      );
+      stream.end(file.buffer);
+    });
+
+    profile.avatar = uploadResult.secure_url;
+    await profile.save();
+
+    return res.status(200).json({ data: { avatar: profile.avatar } });
+  } catch (err) { next(err); }
+};
+
+export const RemoveProfileAvatar = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    if (!session?.user) return res.status(401).json({ message: "Unauthorized" });
+    if (!requireUserRole(session, res)) return;
+
+    const userId = (session.user as any).id as string;
+    const { profileId } = req.params;
+
+    const profile = await Profile.findById(profileId);
+    if (!profile) return res.status(404).json({ message: "Profile not found" });
+    if (profile.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+
+    if (profile.avatar) {
+      await cloudinary.uploader.destroy(`profile-avatars/${String(profile._id)}`, {
+        invalidate: true,
+        resource_type: "image",
+      });
+      profile.avatar = "";
+      await profile.save();
+    }
+
+    return res.status(200).json({ data: { avatar: null, deleted: true } });
   } catch (err) { next(err); }
 };

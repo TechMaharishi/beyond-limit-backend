@@ -245,15 +245,14 @@ export const deleteShortAssignment = async (req: Request, res: Response, next: N
     if (!userId || !shortVideoId) return sendError(res, 400, "userId and shortVideoId are required");
     if (!isValidObjectId(shortVideoId)) return sendError(res, 400, "shortVideoId is not a valid ObjectId");
 
-    // All roles (admin, trainer, trainee) can only unassign what they personally assigned
-    const filter: any = {
-      assignedToId: userId,
-      shortVideoId,
-      assignedById: (user as any).id,
-      assignedByRole,
-    };
+    // Admin can unassign any assignment; trainer/trainee only their own
+    const filter: any = { assignedToId: userId, shortVideoId };
     if (profileId) filter.profileId = profileId;
-    else if (!isAdmin) filter.profileId = "";
+    if (!isAdmin) {
+      filter.assignedById = (user as any).id;
+      filter.assignedByRole = assignedByRole;
+      if (!profileId) filter.profileId = "";
+    }
 
     const result = await ShortAssignment.deleteOne(filter);
     const deletedCount = result.deletedCount || 0;
@@ -310,7 +309,6 @@ export const deleteShortAssignmentsBulk = async (req: Request, res: Response, ne
       }
 
       const cond: DeleteCondition = { assignedToId: userId, shortVideoId };
-      // Always pin profileId — prevents accidental cross-profile deletion for all roles
       if (profileId) cond.profileId = profileId;
       else if (!isAdmin) cond.profileId = "";
       conditions.push(cond);
@@ -320,12 +318,12 @@ export const deleteShortAssignmentsBulk = async (req: Request, res: Response, ne
       return sendError(res, 400, "No valid items to unassign", { invalid });
     }
 
-    // All roles (admin, trainer, trainee) can only remove assignments they personally created
-    const filter: any = {
-      $or: conditions,
-      assignedById: (user as any).id,
-      assignedByRole,
-    };
+    // Admin can unassign any assignment; trainer/trainee only their own
+    const filter: any = { $or: conditions };
+    if (!isAdmin) {
+      filter.assignedById = (user as any).id;
+      filter.assignedByRole = assignedByRole;
+    }
 
     const result = await ShortAssignment.deleteMany(filter);
 
