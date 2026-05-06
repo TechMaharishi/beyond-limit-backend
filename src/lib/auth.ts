@@ -31,6 +31,7 @@ const client = new MongoClient(uri);
 export const db = client.db();
 
 export const auth = betterAuth({
+  appName: "BLPT",
   database: mongodbAdapter(db),
   emailAndPassword: {
     autoSignIn: true,
@@ -132,6 +133,7 @@ export const auth = betterAuth({
       otpLength: 6,
       expiresIn: 900,
       allowedAttempts: 5,
+      storeOTP: "hashed",
     }),
     expo(),
     dash()
