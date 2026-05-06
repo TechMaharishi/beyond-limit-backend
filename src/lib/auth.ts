@@ -136,7 +136,13 @@ export const auth = betterAuth({
       storeOTP: "hashed",
     }),
     expo(),
-    dash(),
+    dash({
+      activityTracking: {
+        trackingCookies: ["access_token", "refresh_token", "session_token"],
+        enabled: true,
+        updateInterval: 300000,
+      }
+    }),
     sentinel()
   ],
   databaseHooks: {
