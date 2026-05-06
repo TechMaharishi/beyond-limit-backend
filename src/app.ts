@@ -42,7 +42,7 @@ app.use(express.json({
 const clientOrigin1 = process.env.CLIENT_ORIGIN1;
 const clientOrigin2 = process.env.CLIENT_ORIGIN2;
 if (!clientOrigin1 || !clientOrigin2) throw new Error("CLIENT_ORIGIN missing");
-const allowedOrigins = [clientOrigin1, clientOrigin2, "http://localhost:5173", "http://127.0.0.1:5173", "https://beyond-limit-frontend.vercel.app"];
+const allowedOrigins = [clientOrigin1, clientOrigin2, "http://localhost:5173", "http://127.0.0.1:5173", "https://beyond-limit-frontend.vercel.app", "https://dash.better-auth.com"];
 app.use(
   cors({
     origin: allowedOrigins,

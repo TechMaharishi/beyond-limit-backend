@@ -180,7 +180,7 @@ export const auth = betterAuth({
       },
     },
   },
-  trustedOrigins: [process.env.CLIENT_ORIGIN1, process.env.CLIENT_ORIGIN2, "http://localhost:5173", "https://blpt-web.vercel.app"],
+  trustedOrigins: [process.env.CLIENT_ORIGIN1, process.env.CLIENT_ORIGIN2, "http://localhost:5173", "https://blpt-web.vercel.app", "https://dash.better-auth.com", "https://beyond-limit-frontend.vercel.app"],
   advanced: {
     useSecureCookies: process.env.NODE_ENV === "production",
     ipAddress: {
