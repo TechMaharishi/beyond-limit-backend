@@ -21,9 +21,10 @@
   "license": "ISC",
   "packageManager": "pnpm@10.12.1",
   "dependencies": {
-    "@better-auth/expo": "^1.6.8",
+    "@better-auth/expo": "^1.6.9",
+    "@better-auth/infra": "^0.2.5",
     "@sendgrid/mail": "^8.1.6",
-    "better-auth": "^1.6.8",
+    "better-auth": "^1.6.9",
     "cloudinary": "^2.9.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
