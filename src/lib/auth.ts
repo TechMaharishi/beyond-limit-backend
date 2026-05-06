@@ -4,7 +4,7 @@ import { admin as adminPlugin } from "better-auth/plugins/admin";
 import { jwt } from "better-auth/plugins/jwt";
 import { bearer } from "better-auth/plugins/bearer";
 import { emailOTP } from "better-auth/plugins/email-otp";
-import { dash, sentinel } from "@better-auth/infra";
+import { dash } from "@better-auth/infra";  //sentinel is for production only
 import { MongoClient } from "mongodb";
 import {
   sendPasswordResetSuccessEmail,
@@ -143,7 +143,7 @@ export const auth = betterAuth({
         updateInterval: 300000,
       }
     }),
-    sentinel()
+    // sentinel()
   ],
   databaseHooks: {
     user: {
