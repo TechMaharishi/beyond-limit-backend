@@ -50,24 +50,29 @@ function sendClinicalNotification(
   })();
 }
 
+// ─── POST /assign-clinical/assign ────────────────────────────────────────────
+// Admin only. Assigns a clinician (trainer or trainee) to a user's profile.
+
 export const assignTraineeToUser = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
-    const canUpdate = await auth.api.userHasPermission({
-      body: { permissions: { trainee: ["update"] } },
-      headers: fromNodeHeaders(req.headers),
+    const canAssign = await auth.api.userHasPermission({
+      body: { permissions: { clinicalAssign: ["create"] } },
+      headers: apiHeaders,
     });
-    if (!canUpdate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
+    if (!canAssign?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
     const body = req.body as {
       userId?: string;
+      profileId?: string;
       clinicianRole?: string;
       clinicianId?: string;
       traineeId?: string;
@@ -76,9 +81,12 @@ export const assignTraineeToUser = async (
       clinicianName?: string;
       traineeName?: string;
     };
-    const userId = typeof body?.userId === "string" ? body.userId : undefined;
 
-    // Explicit role validation — reject anything other than the two valid values
+    const userId    = typeof body?.userId    === "string" ? body.userId.trim()    : "";
+    const profileId = typeof body?.profileId === "string" ? body.profileId.trim() : "";
+
+    if (!userId)    return sendError(res, 400, "userId is required");
+
     const clinicianRoleRaw = typeof body?.clinicianRole === "string" ? body.clinicianRole : undefined;
     if (clinicianRoleRaw !== undefined && clinicianRoleRaw !== "trainee" && clinicianRoleRaw !== "trainer") {
       return sendError(res, 400, "clinicianRole must be 'trainee' or 'trainer'");
@@ -87,38 +95,35 @@ export const assignTraineeToUser = async (
 
     const clinicianId =
       typeof body?.clinicianId === "string" && body.clinicianId.trim().length > 0
-        ? body.clinicianId
+        ? body.clinicianId.trim()
         : typeof body?.traineeId === "string"
-        ? body.traineeId
+        ? body.traineeId.trim()
         : undefined;
     const clinicianEmail =
       typeof body?.clinicianEmail === "string" && body.clinicianEmail.trim().length > 0
-        ? body.clinicianEmail
+        ? body.clinicianEmail.trim()
         : typeof body?.traineeEmail === "string"
-        ? body.traineeEmail
+        ? body.traineeEmail.trim()
         : undefined;
     const clinicianName =
       typeof body?.clinicianName === "string" && body.clinicianName.trim().length > 0
-        ? body.clinicianName
+        ? body.clinicianName.trim()
         : typeof body?.traineeName === "string"
-        ? body.traineeName
+        ? body.traineeName.trim()
         : undefined;
 
-    if (!userId || userId.trim().length === 0) return sendError(res, 400, "userId is required");
-
-    if (!clinicianId || clinicianId.trim().length === 0) {
-      const existing = await ClinicalAssignment.findOne({ userId }).lean();
+    if (!clinicianId || clinicianId.length === 0) {
+      const existing = await ClinicalAssignment.findOne({ userId, profileId }).lean();
       return sendSuccess(res, 200, "No clinician selected; no changes made", existing || null);
     }
 
     if (clinicianId === userId) return sendError(res, 400, "A user cannot be their own clinician");
 
-    if (!clinicianEmail || !clinicianName || clinicianEmail.trim().length === 0 || clinicianName.trim().length === 0) {
+    if (!clinicianEmail || !clinicianName || clinicianEmail.length === 0 || clinicianName.length === 0) {
       return sendError(res, 400, "clinicianEmail and clinicianName are required when assigning a clinician");
     }
 
-    // Read existing doc once for pre-checks (hasLink + max-5 guard)
-    const existingDoc = await ClinicalAssignment.findOne({ userId }).lean() as { clinicians?: any[] } | null;
+    const existingDoc = await ClinicalAssignment.findOne({ userId, profileId }).lean() as { clinicians?: any[] } | null;
     const clinicians = Array.isArray(existingDoc?.clinicians) ? existingDoc.clinicians : [];
     const hasLink = clinicians.some(
       (c: any) => String(c.clinicianId) === clinicianId && String(c.clinicianRole) === clinicianRole
@@ -126,29 +131,28 @@ export const assignTraineeToUser = async (
     if (!hasLink && clinicians.length >= 5) return sendError(res, 400, "Maximum 5 clinicians allowed");
 
     if (hasLink) {
-      // Update name/email only — atomic positional update, no race condition
       await ClinicalAssignment.updateOne(
-        { userId },
+        { userId, profileId },
         {
           $set: {
-            "clinicians.$[c].clinicianEmail": clinicianEmail.trim(),
-            "clinicians.$[c].clinicianName": clinicianName.trim(),
+            "clinicians.$[c].clinicianEmail": clinicianEmail,
+            "clinicians.$[c].clinicianName": clinicianName,
           },
         },
         { arrayFilters: [{ "c.clinicianId": clinicianId, "c.clinicianRole": clinicianRole }] }
       );
     } else {
-      // Step 1: ensure the document exists for this userId (safe no-op if already exists)
+      // Step 1: ensure document exists for (userId, profileId)
       await ClinicalAssignment.updateOne(
-        { userId },
-        { $setOnInsert: { userId, clinicians: [] } },
+        { userId, profileId },
+        { $setOnInsert: { userId, profileId, clinicians: [] } },
         { upsert: true }
       );
-      // Step 2: push the new clinician — $expr and $elemMatch are safe here because
-      // the document is guaranteed to exist, so no upsert path is triggered
+      // Step 2: push — doc is guaranteed to exist, so $expr + $elemMatch are safe
       const pushResult = await ClinicalAssignment.updateOne(
         {
           userId,
+          profileId,
           $expr: { $lt: [{ $size: { $ifNull: ["$clinicians", []] } }, 5] },
           clinicians: { $not: { $elemMatch: { clinicianId, clinicianRole } } },
         },
@@ -157,8 +161,8 @@ export const assignTraineeToUser = async (
             clinicians: {
               clinicianId,
               clinicianRole,
-              clinicianEmail: clinicianEmail.trim(),
-              clinicianName: clinicianName.trim(),
+              clinicianEmail,
+              clinicianName,
             },
           },
         }
@@ -168,14 +172,14 @@ export const assignTraineeToUser = async (
       }
     }
 
-    const updated = await ClinicalAssignment.findOne({ userId }).lean();
+    const updated = await ClinicalAssignment.findOne({ userId, profileId }).lean();
 
     sendClinicalNotification(
       userId,
       clinicianId,
       "clinician-assigned",
       "New clinician assigned",
-      `Connected with a new clinician: ${String(clinicianName).trim()}`
+      `Connected with a new clinician: ${clinicianName}`
     );
 
     return sendSuccess(res, 200, "Clinician assignment updated", updated);
@@ -184,38 +188,40 @@ export const assignTraineeToUser = async (
   }
 };
 
+// ─── DELETE /assign-clinical/assign ──────────────────────────────────────────
+
 export const unassignTraineeFromUser = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
-    const canUpdate = await auth.api.userHasPermission({
-      body: { permissions: { trainee: ["update"] } },
-      headers: fromNodeHeaders(req.headers),
+    const canDelete = await auth.api.userHasPermission({
+      body: { permissions: { clinicalAssign: ["delete"] } },
+      headers: apiHeaders,
     });
-    if (!canUpdate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
+    if (!canDelete?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
-    const body = req.body as { userId?: string; clinicianId?: string; clinicianRole?: string };
-    const { userId, clinicianId } = body;
+    const body = req.body as { userId?: string; profileId?: string; clinicianId?: string; clinicianRole?: string };
+    const userId    = typeof body?.userId    === "string" ? body.userId.trim()    : "";
+    const profileId = typeof body?.profileId === "string" ? body.profileId.trim() : "";
+    const { clinicianId } = body;
+
+    if (!userId) return sendError(res, 400, "userId is required");
+
     const clinicianRoleRaw = typeof body?.clinicianRole === "string" ? body.clinicianRole : undefined;
-
-    // Explicit role validation
     if (clinicianRoleRaw !== undefined && clinicianRoleRaw !== "trainee" && clinicianRoleRaw !== "trainer") {
       return sendError(res, 400, "clinicianRole must be 'trainee' or 'trainer'");
     }
     const clinicianRole: "trainee" | "trainer" | undefined =
       clinicianRoleRaw === "trainer" ? "trainer" : clinicianRoleRaw === "trainee" ? "trainee" : undefined;
 
-    if (!userId || typeof userId !== "string" || userId.trim().length === 0) {
-      return sendError(res, 400, "userId is required");
-    }
-
-    const existing = await ClinicalAssignment.findOne({ userId }).lean() as { clinicians?: any[] } | null;
+    const existing = await ClinicalAssignment.findOne({ userId, profileId }).lean() as { clinicians?: any[] } | null;
     if (!existing || !Array.isArray(existing.clinicians) || existing.clinicians.length === 0) {
       return sendSuccess(res, 200, "No clinician assigned; no changes made", null);
     }
@@ -224,7 +230,7 @@ export const unassignTraineeFromUser = async (
       const arr = existing.clinicians;
       if (arr.length === 1) {
         await ClinicalAssignment.updateOne(
-          { userId },
+          { userId, profileId },
           { $pull: { clinicians: { clinicianId: String(arr[0].clinicianId), clinicianRole: String(arr[0].clinicianRole) } } }
         );
       } else {
@@ -232,7 +238,7 @@ export const unassignTraineeFromUser = async (
       }
     } else {
       const result = await ClinicalAssignment.updateOne(
-        { userId },
+        { userId, profileId },
         { $pull: { clinicians: { clinicianId, clinicianRole } } }
       );
       if (!result.modifiedCount) {
@@ -254,19 +260,24 @@ export const unassignTraineeFromUser = async (
   }
 };
 
+// ─── GET /assign-clinical/:userId ─────────────────────────────────────────────
+// Returns clinicians for a specific (userId, profileId) pair.
+// profileId query param is optional — omit to get the default profile's clinicians.
+
 export const getAssignedTraineeForUser = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
-      body: { permissions: { trainee: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      body: { permissions: { clinicalAssign: ["view"] } },
+      headers: apiHeaders,
     });
     if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
@@ -275,15 +286,18 @@ export const getAssignedTraineeForUser = async (
       return sendError(res, 400, "userId param is required");
     }
 
-    const assignment = await ClinicalAssignment.findOne({ userId }).lean() as { clinicians?: any[] } | null;
+    const profileId = typeof req.query.profileId === "string" ? req.query.profileId.trim() : "";
+
+    const assignment = await ClinicalAssignment.findOne({ userId, profileId }).lean() as { clinicians?: any[] } | null;
     const clinicians = Array.isArray(assignment?.clinicians) ? assignment.clinicians : [];
     const payload = {
       userId,
+      profileId,
       clinicians: clinicians.map((c: any) => ({
-        clinicianId: String(c.clinicianId || ""),
-        clinicianRole: String(c.clinicianRole || ""),
+        clinicianId:    String(c.clinicianId    || ""),
+        clinicianRole:  String(c.clinicianRole  || ""),
         clinicianEmail: String(c.clinicianEmail || ""),
-        clinicianName: String(c.clinicianName || ""),
+        clinicianName:  String(c.clinicianName  || ""),
       })),
     };
 
@@ -293,19 +307,22 @@ export const getAssignedTraineeForUser = async (
   }
 };
 
+// ─── GET /assign-clinical/trainee/:traineeId ──────────────────────────────────
+
 export const getUsersAssignedToTrainee = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
-      body: { permissions: { trainee: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      body: { permissions: { clinicalAssign: ["view"] } },
+      headers: apiHeaders,
     });
     if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
@@ -316,7 +333,6 @@ export const getUsersAssignedToTrainee = async (
 
     const { limit, page, offset } = parsePagination(req.query as any);
 
-    // $elemMatch ensures both conditions are on the same array element
     const filter = { clinicians: { $elemMatch: { clinicianId: traineeId, clinicianRole: "trainee" } } };
 
     const [docs, total] = await Promise.all([
@@ -326,7 +342,6 @@ export const getUsersAssignedToTrainee = async (
 
     const ids = docs.map((d: any) => String(d.userId)).filter(Boolean);
 
-    // Parallel user lookups — bounded by MAX_PAGE_SIZE (100)
     const userResults = await Promise.all(
       ids.map((id) =>
         auth.api
@@ -341,7 +356,13 @@ export const getUsersAssignedToTrainee = async (
     const out = ids.map((id, i) => {
       const result = userResults[i];
       const u = result && Array.isArray(result.users) ? result.users[0] : null;
-      return { id, name: String(u?.name || ""), email: String(u?.email || "") };
+      const doc = docs[i] as any;
+      return {
+        id,
+        profileId: String(doc?.profileId || ""),
+        name: String(u?.name || ""),
+        email: String(u?.email || ""),
+      };
     });
 
     return sendSuccess(res, 200, "Assigned users for trainee fetched", out, {

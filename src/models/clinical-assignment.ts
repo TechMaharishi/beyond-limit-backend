@@ -2,6 +2,7 @@ import { Schema, model, Document } from "mongoose";
 
 export interface IClinicalAssignment extends Document {
   userId: string;
+  profileId: string;
   clinicians: Array<{
     clinicianId: string;
     clinicianRole: "trainee" | "trainer";
@@ -24,7 +25,8 @@ const ClinicianSubSchema = new Schema(
 
 const ClinicalAssignmentSchema = new Schema<IClinicalAssignment>(
   {
-    userId: { type: String, required: true, index: true, unique: true },
+    userId:    { type: String, required: true, index: true },
+    profileId: { type: String, required: true, default: "" },
     clinicians: {
       type: [ClinicianSubSchema],
       default: [],
@@ -38,6 +40,9 @@ const ClinicalAssignmentSchema = new Schema<IClinicalAssignment>(
   },
   { timestamps: true }
 );
+
+// One assignment doc per (user, profile) pair
+ClinicalAssignmentSchema.index({ userId: 1, profileId: 1 }, { unique: true });
 
 // Supports $elemMatch queries on the clinicians array (getUsersAssignedToTrainee)
 ClinicalAssignmentSchema.index({ "clinicians.clinicianId": 1 });
