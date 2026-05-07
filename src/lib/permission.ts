@@ -5,6 +5,7 @@ const statement = {
   ...defaultStatements,
   assignCourse: ["create", "view", "delete"],
   assignShorts: ["create", "view", "delete"],
+  clinicalAssign: ["create", "view", "delete"],
   trainee: ["view", "update"],
   shortVideo: ["create", "view", "update", "delete"],
   shortVideoStatus: ["create", "view"],
@@ -21,6 +22,7 @@ export const ac = createAccessControl(statement);
 // Roles
 export const user = ac.newRole({
   assignCourse: ["view"],
+  clinicalAssign: ["view"],
   trainee: ["view"],
   shortVideo: ["view"],
   course: ["view"],
@@ -33,6 +35,7 @@ export const user = ac.newRole({
 export const trainee = ac.newRole({
   assignCourse: ["create", "view", "delete"],
   assignShorts: ["create", "view", "delete"],
+  clinicalAssign: ["view"],
   trainee: ["view"],
   shortVideo: ["create", "view", "update", "delete"],
   shortVideoStatus: ["view"],
@@ -46,6 +49,7 @@ export const trainee = ac.newRole({
 export const trainer = ac.newRole({
   assignCourse: ["create", "view", "delete"],
   assignShorts: ["create", "view", "delete"],
+  clinicalAssign: ["create", "view", "delete"],
   trainee: ["view", "update"],
   shortVideo: ["create", "view", "update", "delete"],
   shortVideoStatus: ["view"],
@@ -60,6 +64,7 @@ export const trainer = ac.newRole({
 export const admin = ac.newRole({
   assignCourse: ["create", "view", "delete"],
   assignShorts: ["create", "view", "delete"],
+  clinicalAssign: ["create", "view", "delete"],
   trainee: ["view", "update"],
   shortVideo: ["create", "view", "update", "delete"],
   shortVideoStatus: ["create", "view"],
