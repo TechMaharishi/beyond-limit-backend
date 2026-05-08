@@ -12,7 +12,7 @@ import { DeviceToken } from "@/models/device-token";
 import { Notification } from "@/models/notification";
 import { sendLearningAssignmentEmail } from "@/utils/mailer";
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+
 
 const MAX_PAGE_SIZE = 100;
 
@@ -32,7 +32,7 @@ function parsePagination(query: Record<string, any>): { limit: number; page: num
 
 async function fetchCourseMap(courseIds: string[]): Promise<Map<string, any>> {
   if (courseIds.length === 0) return new Map();
-  const unique = [...new Set(courseIds)];
+  const unique = Array.from(new Set(courseIds));
   const courses = await Course.find({ _id: { $in: unique } })
     .select("title description thumbnailUrl tags status accessLevel createdAt updatedAt user createdBy chapters")
     .lean();
@@ -144,11 +144,26 @@ function buildCourseSafe(course: any) {
   };
 }
 
-function sendNotification(userId: string, courseId: string, assignerName: string) {
+function dispatchCourseAssignmentAlerts({
+  userId,
+  courseId,
+  assignerName,
+  targetEmail,
+  targetName,
+  courseTitle,
+}: {
+  userId: string;
+  courseId: string;
+  assignerName: string;
+  targetEmail: string;
+  targetName: string;
+  courseTitle: string;
+}): void {
+  const title = "New learning assigned";
+  const body = `New learning assigned by ${assignerName}`;
+
   void (async () => {
     try {
-      const title = "New learning assigned";
-      const body = `New learning assigned by ${assignerName}`;
       const tokenDoc = await DeviceToken.findOne({ userId }).lean();
       if (tokenDoc?.deviceToken) {
         const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
@@ -166,38 +181,23 @@ function sendNotification(userId: string, courseId: string, assignerName: string
           } as any);
         }
       }
-      try {
-        await Notification.create({
-          userId,
-          title,
-          body,
-          data: { _id: String(courseId), event: "course-assigned" },
-          read: false,
-        });
-      } catch {}
+      await Notification.create({
+        userId, title, body,
+        data: { _id: String(courseId), event: "course-assigned" },
+        read: false,
+      }).catch(() => {});
     } catch {}
   })();
+
+  void sendLearningAssignmentEmail({
+    to: targetEmail,
+    firstName: targetName,
+    learningTitle: courseTitle,
+    assignedByName: assignerName,
+  }).catch(() => {});
 }
 
-function sendAssignmentEmail(
-  email: string,
-  name: string,
-  courseTitle: string,
-  assignerName: string
-) {
-  void (async () => {
-    try {
-      await sendLearningAssignmentEmail({
-        to: email,
-        firstName: name,
-        learningTitle: courseTitle,
-        assignedByName: assignerName,
-      });
-    } catch {}
-  })();
-}
 
-// ─── controllers ────────────────────────────────────────────────────────────
 
 export const createCourseAssignment = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -242,7 +242,7 @@ export const createCourseAssignment = async (req: Request, res: Response, next: 
       return sendError(res, 403, "Courses can only be assigned to trainees or users");
     }
 
-    // User-role targets require a profileId
+
     const resolvedProfileId = isTargetUser ? (profileId || "") : "";
     if (isTargetUser && !resolvedProfileId) {
       return sendError(res, 400, "profileId is required when assigning to a user account");
@@ -267,13 +267,14 @@ export const createCourseAssignment = async (req: Request, res: Response, next: 
 
     const isNew = result.upsertedCount > 0;
     if (isNew) {
-      sendNotification(userId, courseId, String((user as any).name || "Unknown"));
-      sendAssignmentEmail(
-        String((targetUser as any).email || ""),
-        String((targetUser as any).name || ""),
-        String((course as any).title || ""),
-        String((user as any).name || "")
-      );
+      dispatchCourseAssignmentAlerts({
+        userId,
+        courseId,
+        assignerName: String((user as any).name || "Unknown"),
+        targetEmail: String((targetUser as any).email || ""),
+        targetName: String((targetUser as any).name || ""),
+        courseTitle: String((course as any).title || ""),
+      });
     }
 
     return sendSuccess(res, isNew ? 201 : 200, isNew ? "Course assigned" : "Course already assigned");
@@ -309,8 +310,8 @@ export const createCourseAssignmentsBulk = async (req: Request, res: Response, n
     }
 
     const [courses, ...userResults] = await Promise.all([
-      Course.find({ _id: { $in: [...uniqueCourseIds] }, status: "published" }).select("_id title").lean(),
-      ...[...uniqueUserIds].map((id) =>
+      Course.find({ _id: { $in: Array.from(uniqueCourseIds) }, status: "published" }).select("_id title").lean(),
+      ...Array.from(uniqueUserIds).map((id) =>
         auth.api.listUsers({
           query: { filterField: "id", filterValue: id, limit: 1, offset: 0, sortBy: "createdAt", sortDirection: "desc" },
           headers: fromNodeHeaders(req.headers),
@@ -403,7 +404,7 @@ export const createCourseAssignmentsBulk = async (req: Request, res: Response, n
     let upsertedIndices = new Set<number>();
     if (ops.length > 0) {
       const bulkResult = await CourseAssignment.bulkWrite(ops, { ordered: false });
-      // bulkWrite upsertedIds uses string-indexed keys matching ops array position
+
       upsertedIndices = new Set(
         Object.keys(bulkResult.upsertedIds || {}).map(Number)
       );
@@ -416,8 +417,14 @@ export const createCourseAssignmentsBulk = async (req: Request, res: Response, n
         results[i].status = isNew ? "assigned" : "alreadyAssigned";
         if (isNew) {
           const nq = notifyQueue[opIdx];
-          sendNotification(nq.userId, nq.courseId, String((user as any).name || "Unknown"));
-          sendAssignmentEmail(nq.email, nq.name, nq.courseTitle, String((user as any).name || ""));
+          dispatchCourseAssignmentAlerts({
+            userId: nq.userId,
+            courseId: nq.courseId,
+            assignerName: String((user as any).name || "Unknown"),
+            targetEmail: nq.email,
+            targetName: nq.name,
+            courseTitle: nq.courseTitle,
+          });
         }
         opIdx++;
       }
@@ -458,7 +465,7 @@ export const deleteCourseAssignment = async (req: Request, res: Response, next: 
     const isAdmin = role === "admin";
     const resolvedProfileId = profileId || "";
 
-    // Admin can unassign any assignment; trainer/trainee only their own
+
     const filter: Record<string, any> = { assignedToId: userId, courseId, profileId: resolvedProfileId };
     if (!isAdmin) {
       filter.assignedById = String((user as any).id);
@@ -504,7 +511,7 @@ export const deleteCourseAssignmentsBulk = async (req: Request, res: Response, n
 
     if (conditions.length === 0) return sendError(res, 400, "No valid items provided");
 
-    // Admin can unassign any assignment; trainer/trainee only their own
+
     const deleteFilter: Record<string, any> = { $or: conditions };
     if (!isAdmin) {
       deleteFilter.assignedById = String((user as any).id);
