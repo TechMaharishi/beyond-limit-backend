@@ -56,6 +56,11 @@ export const CreateMyProfile = async (req: Request, res: Response, next: NextFun
     if (!name) return res.status(400).json({ message: "Profile name is required" });
     const avatar = typeof req.body.avatar === "string" ? req.body.avatar.trim() : "";
 
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (file && !file.mimetype?.startsWith("image/")) {
+      return res.status(400).json({ message: "Invalid file type. Only images are allowed" });
+    }
+
     // Transaction ensures the count check and insert are atomic — prevents two
     // concurrent requests from both passing the MAX_PROFILES guard.
     // Requires MongoDB replica set (available on Atlas).
@@ -82,6 +87,28 @@ export const CreateMyProfile = async (req: Request, res: Response, next: NextFun
     if (limitExceeded) {
       return res.status(400).json({ message: `Maximum ${MAX_PROFILES} profiles allowed` });
     }
+
+    if (created && file) {
+      try {
+        const uploadResult: UploadApiResponse = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: "profile-avatars", public_id: String(created._id), overwrite: true, resource_type: "image" },
+            (error, result) => {
+              if (error) return reject(error);
+              if (!result) return reject(new Error("Upload failed"));
+              resolve(result as UploadApiResponse);
+            }
+          );
+          stream.end(file.buffer);
+        });
+        
+        created.avatar = uploadResult.secure_url;
+        await Profile.updateOne({ _id: created._id }, { avatar: created.avatar });
+      } catch (uploadErr) {
+        console.error("[CreateMyProfile] Failed to upload profile avatar during creation:", uploadErr);
+      }
+    }
+
     return res.status(201).json({ data: created });
   } catch (err) { next(err); }
 };
@@ -102,9 +129,37 @@ export const UpdateMyProfile = async (req: Request, res: Response, next: NextFun
     if (typeof req.body.name === "string" && req.body.name.trim()) {
       profile.name = req.body.name.trim();
     }
-    if (typeof req.body.avatar === "string") {
-      profile.avatar = req.body.avatar.trim();
+
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (file) {
+      if (!file.mimetype?.startsWith("image/")) {
+        return res.status(400).json({ message: "Invalid file type. Only images are allowed" });
+      }
+
+      const uploadResult: UploadApiResponse = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "profile-avatars", public_id: String(profile._id), overwrite: true, resource_type: "image" },
+          (error, result) => {
+            if (error) return reject(error);
+            if (!result) return reject(new Error("Upload failed"));
+            resolve(result as UploadApiResponse);
+          }
+        );
+        stream.end(file.buffer);
+      });
+
+      profile.avatar = uploadResult.secure_url;
+    } else if (typeof req.body.avatar === "string") {
+      const avatarStr = req.body.avatar.trim();
+      if (avatarStr === "" && profile.avatar) {
+        await cloudinary.uploader.destroy(`profile-avatars/${String(profile._id)}`, {
+          invalidate: true,
+          resource_type: "image",
+        });
+      }
+      profile.avatar = avatarStr;
     }
+
     await profile.save();
 
     return res.status(200).json({ data: profile });

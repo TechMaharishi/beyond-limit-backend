@@ -14,8 +14,8 @@ const profilesRouter = express.Router();
 
 profilesRouter.post("/profiles/switch", SwitchProfile);
 profilesRouter.get("/profiles", ListMyProfiles);
-profilesRouter.post("/profiles", CreateMyProfile);
-profilesRouter.patch("/profiles/:profileId", UpdateMyProfile);
+profilesRouter.post("/profiles", upload.single("image"), CreateMyProfile);
+profilesRouter.patch("/profiles/:profileId", upload.single("image"), UpdateMyProfile);
 profilesRouter.delete("/profiles/:profileId", DeleteMyProfile);
 profilesRouter.post("/profiles/:profileId/avatar", upload.single("image"), UploadProfileAvatar);
 profilesRouter.delete("/profiles/:profileId/avatar", RemoveProfileAvatar);
