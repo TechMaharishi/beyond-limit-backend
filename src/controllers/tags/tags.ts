@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import mongoose from "mongoose";
+import mongoose, { isValidObjectId } from "mongoose";
 import { auth } from "@/lib/auth";
 import { fromNodeHeaders } from "better-auth/node";
 import { sendSuccess, sendError } from "@/utils/api-response";
@@ -71,7 +71,7 @@ export const deactivateTag = async (req: Request, res: Response, next: NextFunct
 
     const id = String(req.params.id || "");
     if (!id) return sendError(res, 400, "Tag id is required");
-    if (!mongoose.Types.ObjectId.isValid(id)) return sendError(res, 400, "Invalid tag id");
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid tag id");
 
     const tag = await Tag.findById(id);
     if (!tag) return sendError(res, 404, "Tag not found");
@@ -98,7 +98,7 @@ export const activateTag = async (req: Request, res: Response, next: NextFunctio
 
     const id = String(req.params.id || "");
     if (!id) return sendError(res, 400, "Tag id is required");
-    if (!mongoose.Types.ObjectId.isValid(id)) return sendError(res, 400, "Invalid tag id");
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid tag id");
 
     const tag = await Tag.findById(id);
     if (!tag) return sendError(res, 404, "Tag not found");
@@ -125,7 +125,7 @@ export const deleteTag = async (req: Request, res: Response, next: NextFunction)
 
     const id = String(req.params.id || "");
     if (!id) return sendError(res, 400, "Tag id is required");
-    if (!mongoose.Types.ObjectId.isValid(id)) return sendError(res, 400, "Invalid tag id");
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid tag id");
 
     const deleted = await Tag.findByIdAndDelete(id).lean();
     if (!deleted) return sendError(res, 404, "Tag not found");

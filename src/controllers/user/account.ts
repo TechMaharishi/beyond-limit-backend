@@ -1,9 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 import { auth } from "@/lib/auth";
 import { fromNodeHeaders } from "better-auth/node";
-import { sendError } from "@/utils/api-response";
-import { sendWelcomeEmail } from "@/utils/mailer";
-import { subscribeEmailToMailchimpSafe } from "@/utils/mailchimp";
 import cloudinary from "@/config/cloudinary";
 import type { UploadApiResponse } from "cloudinary";
 

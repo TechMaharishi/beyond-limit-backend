@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { isValidObjectId } from "mongoose";
 import { auth } from "@/lib/auth";
 import { fromNodeHeaders } from "better-auth/node";
 import { sendError, sendSuccess } from "@/utils/api-response";
@@ -50,8 +51,7 @@ function sendClinicalNotification(
   })();
 }
 
-// ─── POST /assign-clinical/assign ────────────────────────────────────────────
-// Admin only. Assigns a clinician (trainer or trainee) to a user's profile.
+
 
 export const assignTraineeToUser = async (
   req: Request,
@@ -86,6 +86,8 @@ export const assignTraineeToUser = async (
     const profileId = typeof body?.profileId === "string" ? body.profileId.trim() : "";
 
     if (!userId)    return sendError(res, 400, "userId is required");
+    if (!isValidObjectId(userId)) return sendError(res, 400, "Invalid userId");
+    if (profileId && !isValidObjectId(profileId)) return sendError(res, 400, "Invalid profileId");
 
     const clinicianRoleRaw = typeof body?.clinicianRole === "string" ? body.clinicianRole : undefined;
     if (clinicianRoleRaw !== undefined && clinicianRoleRaw !== "trainee" && clinicianRoleRaw !== "trainer") {
@@ -117,6 +119,8 @@ export const assignTraineeToUser = async (
       return sendSuccess(res, 200, "No clinician selected; no changes made", existing || null);
     }
 
+    if (!isValidObjectId(clinicianId)) return sendError(res, 400, "Invalid clinicianId");
+
     if (clinicianId === userId) return sendError(res, 400, "A user cannot be their own clinician");
 
     if (!clinicianEmail || !clinicianName || clinicianEmail.length === 0 || clinicianName.length === 0) {
@@ -142,13 +146,13 @@ export const assignTraineeToUser = async (
         { arrayFilters: [{ "c.clinicianId": clinicianId, "c.clinicianRole": clinicianRole }] }
       );
     } else {
-      // Step 1: ensure document exists for (userId, profileId)
+
       await ClinicalAssignment.updateOne(
         { userId, profileId },
         { $setOnInsert: { userId, profileId, clinicians: [] } },
         { upsert: true }
       );
-      // Step 2: push — doc is guaranteed to exist, so $expr + $elemMatch are safe
+
       const pushResult = await ClinicalAssignment.updateOne(
         {
           userId,
@@ -188,7 +192,7 @@ export const assignTraineeToUser = async (
   }
 };
 
-// ─── DELETE /assign-clinical/assign ──────────────────────────────────────────
+
 
 export const unassignTraineeFromUser = async (
   req: Request,
@@ -213,6 +217,9 @@ export const unassignTraineeFromUser = async (
     const { clinicianId } = body;
 
     if (!userId) return sendError(res, 400, "userId is required");
+    if (!isValidObjectId(userId)) return sendError(res, 400, "Invalid userId");
+    if (profileId && !isValidObjectId(profileId)) return sendError(res, 400, "Invalid profileId");
+    if (clinicianId && !isValidObjectId(clinicianId)) return sendError(res, 400, "Invalid clinicianId");
 
     const clinicianRoleRaw = typeof body?.clinicianRole === "string" ? body.clinicianRole : undefined;
     if (clinicianRoleRaw !== undefined && clinicianRoleRaw !== "trainee" && clinicianRoleRaw !== "trainer") {
@@ -260,9 +267,7 @@ export const unassignTraineeFromUser = async (
   }
 };
 
-// ─── GET /assign-clinical/:userId ─────────────────────────────────────────────
-// Returns clinicians for a specific (userId, profileId) pair.
-// profileId query param is optional — omit to get the default profile's clinicians.
+
 
 export const getAssignedTraineeForUser = async (
   req: Request,
@@ -285,8 +290,10 @@ export const getAssignedTraineeForUser = async (
     if (!userId || typeof userId !== "string" || userId.trim().length === 0) {
       return sendError(res, 400, "userId param is required");
     }
+    if (!isValidObjectId(userId)) return sendError(res, 400, "Invalid userId");
 
     const profileId = typeof req.query.profileId === "string" ? req.query.profileId.trim() : "";
+    if (profileId && !isValidObjectId(profileId)) return sendError(res, 400, "Invalid profileId");
 
     const assignment = await ClinicalAssignment.findOne({ userId, profileId }).lean() as { clinicians?: any[] } | null;
     const clinicians = Array.isArray(assignment?.clinicians) ? assignment.clinicians : [];
@@ -307,7 +314,7 @@ export const getAssignedTraineeForUser = async (
   }
 };
 
-// ─── GET /assign-clinical/trainee/:traineeId ──────────────────────────────────
+
 
 export const getUsersAssignedToTrainee = async (
   req: Request,
@@ -330,6 +337,7 @@ export const getUsersAssignedToTrainee = async (
     if (!traineeId || typeof traineeId !== "string" || traineeId.trim().length === 0) {
       return sendError(res, 400, "traineeId param is required");
     }
+    if (!isValidObjectId(traineeId)) return sendError(res, 400, "Invalid traineeId");
 
     const { limit, page, offset } = parsePagination(req.query as any);
 

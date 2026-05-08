@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from "express";
+import { isValidObjectId } from "mongoose";
 import { auth } from "@/lib/auth";
 import { fromNodeHeaders } from "better-auth/node";
 import { Profile } from "@/models/profile";
@@ -21,6 +22,14 @@ function requireUserRole(session: any, res: Response): boolean {
   return true;
 }
 
+async function safeCloudinaryDestroy(publicId: string, label: string): Promise<void> {
+  try {
+    await cloudinary.uploader.destroy(publicId, { invalidate: true, resource_type: "image" });
+  } catch (err) {
+    console.error(`[${label}] Failed to delete Cloudinary asset "${publicId}":`, err);
+  }
+}
+
 export const ListMyProfiles = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
@@ -31,8 +40,6 @@ export const ListMyProfiles = async (req: Request, res: Response, next: NextFunc
     const profiles = await Profile.find({ userId }).sort({ createdAt: 1 }).lean();
     let activeProfileId = ((session.session as any).activeProfileId as string | null) ?? null;
 
-    // Self-heal: if the session points to a profile that no longer exists (e.g. deleted
-    // by admin from another device), clear it so the client shows the picker screen.
     if (activeProfileId && !profiles.some((p) => String(p._id) === activeProfileId)) {
       const token = (session.session as any).token as string;
       await clearSessionActiveProfile(token).catch((err) =>
@@ -61,9 +68,6 @@ export const CreateMyProfile = async (req: Request, res: Response, next: NextFun
       return res.status(400).json({ message: "Invalid file type. Only images are allowed" });
     }
 
-    // Transaction ensures the count check and insert are atomic — prevents two
-    // concurrent requests from both passing the MAX_PROFILES guard.
-    // Requires MongoDB replica set (available on Atlas).
     let created: any = null;
     let limitExceeded = false;
     const mongoSession = await Profile.startSession();
@@ -72,7 +76,7 @@ export const CreateMyProfile = async (req: Request, res: Response, next: NextFun
         const count = await Profile.countDocuments({ userId }).session(mongoSession);
         if (count >= MAX_PROFILES) {
           limitExceeded = true;
-          return; // commit empty transaction — no insert
+          return;
         }
         const docs = await Profile.create(
           [{ userId, name, avatar, isDefault: false }],
@@ -101,7 +105,7 @@ export const CreateMyProfile = async (req: Request, res: Response, next: NextFun
           );
           stream.end(file.buffer);
         });
-        
+
         created.avatar = uploadResult.secure_url;
         await Profile.updateOne({ _id: created._id }, { avatar: created.avatar });
       } catch (uploadErr) {
@@ -121,6 +125,8 @@ export const UpdateMyProfile = async (req: Request, res: Response, next: NextFun
 
     const userId = (session.user as any).id as string;
     const { profileId } = req.params;
+
+    if (!isValidObjectId(profileId)) return res.status(400).json({ message: "Invalid profile ID" });
 
     const profile = await Profile.findById(profileId);
     if (!profile) return res.status(404).json({ message: "Profile not found" });
@@ -152,10 +158,7 @@ export const UpdateMyProfile = async (req: Request, res: Response, next: NextFun
     } else if (typeof req.body.avatar === "string") {
       const avatarStr = req.body.avatar.trim();
       if (avatarStr === "" && profile.avatar) {
-        await cloudinary.uploader.destroy(`profile-avatars/${String(profile._id)}`, {
-          invalidate: true,
-          resource_type: "image",
-        });
+        await safeCloudinaryDestroy(`profile-avatars/${String(profile._id)}`, "UpdateMyProfile");
       }
       profile.avatar = avatarStr;
     }
@@ -175,6 +178,8 @@ export const DeleteMyProfile = async (req: Request, res: Response, next: NextFun
     const userId = (session.user as any).id as string;
     const { profileId } = req.params;
 
+    if (!isValidObjectId(profileId)) return res.status(400).json({ message: "Invalid profile ID" });
+
     const profile = await Profile.findById(profileId);
     if (!profile) return res.status(404).json({ message: "Profile not found" });
     if (profile.userId !== userId) return res.status(403).json({ message: "Forbidden" });
@@ -184,7 +189,10 @@ export const DeleteMyProfile = async (req: Request, res: Response, next: NextFun
       return res.status(400).json({ message: "Cannot delete the only profile" });
     }
 
-    // Clear this profile from the caller's current session and any other open sessions
+    if (profile.avatar) {
+      await safeCloudinaryDestroy(`profile-avatars/${String(profile._id)}`, "DeleteMyProfile");
+    }
+
     const token = (session.session as any).token as string;
     const currentActiveId = (session.session as any).activeProfileId as string | null;
     await profile.deleteOne();
@@ -192,7 +200,6 @@ export const DeleteMyProfile = async (req: Request, res: Response, next: NextFun
     if (currentActiveId === String(profile._id)) {
       await clearSessionActiveProfile(token);
     }
-    // Also clear from any other device sessions the user may have open
     await clearProfileFromAllSessions(userId, String(profile._id));
 
     return res.status(200).json({ data: { deleted: true } });
@@ -208,6 +215,8 @@ export const SwitchProfile = async (req: Request, res: Response, next: NextFunct
     const userId = (session.user as any).id as string;
     const profileId = typeof req.body.profileId === "string" ? req.body.profileId.trim() : "";
     if (!profileId) return res.status(400).json({ message: "profileId is required" });
+
+    if (!isValidObjectId(profileId)) return res.status(400).json({ message: "Invalid profile ID" });
 
     const profile = await Profile.findById(profileId).lean();
     if (!profile) return res.status(404).json({ message: "Profile not found" });
@@ -228,6 +237,8 @@ export const UploadProfileAvatar = async (req: Request, res: Response, next: Nex
 
     const userId = (session.user as any).id as string;
     const { profileId } = req.params;
+
+    if (!isValidObjectId(profileId)) return res.status(400).json({ message: "Invalid profile ID" });
 
     const profile = await Profile.findById(profileId);
     if (!profile) return res.status(404).json({ message: "Profile not found" });
@@ -265,15 +276,14 @@ export const RemoveProfileAvatar = async (req: Request, res: Response, next: Nex
     const userId = (session.user as any).id as string;
     const { profileId } = req.params;
 
+    if (!isValidObjectId(profileId)) return res.status(400).json({ message: "Invalid profile ID" });
+
     const profile = await Profile.findById(profileId);
     if (!profile) return res.status(404).json({ message: "Profile not found" });
     if (profile.userId !== userId) return res.status(403).json({ message: "Forbidden" });
 
     if (profile.avatar) {
-      await cloudinary.uploader.destroy(`profile-avatars/${String(profile._id)}`, {
-        invalidate: true,
-        resource_type: "image",
-      });
+      await safeCloudinaryDestroy(`profile-avatars/${String(profile._id)}`, "RemoveProfileAvatar");
       profile.avatar = "";
       await profile.save();
     }

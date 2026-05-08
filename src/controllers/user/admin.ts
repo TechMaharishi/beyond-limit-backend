@@ -600,10 +600,6 @@ export const AdminDeleteProfile = async (req: Request, res: Response, next: Next
   } catch (err) { next(err); }
 };
 
-// ─── ListUserProfiles ─────────────────────────────────────────────────────────
-// Read-only profile lookup for trainer/trainee/admin — needed when assigning
-// content to a user account so the caller can pick a valid profileId.
-
 export const ListUserProfiles = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const apiHeaders = fromNodeHeaders(req.headers);

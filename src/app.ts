@@ -1,4 +1,5 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { getHealth } from '@/controllers/health/health';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -95,6 +96,14 @@ registerRouters(app);
 
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   logger.error("Unhandled error:", err);
+
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ message: "File size too large. Maximum limit is 100MB." });
+    }
+    return res.status(400).json({ message: err.message });
+  }
+
   if (err instanceof APIError) {
     return res.status(Number(err.status) || 500).json({ error: err.message });
   }

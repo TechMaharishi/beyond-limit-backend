@@ -14,12 +14,11 @@ superAdminRouter.post("/admin/unban-user", UnbanUser);
 superAdminRouter.post("/admin/delete-user", DeleteUser);
 superAdminRouter.post("/admin/delete-users", DeleteUsersBulk);
 superAdminRouter.post("/admin/update-user", UpdateUser);
-
+//We can remove AdminListProfiles API if we are not using it.
 superAdminRouter.get("/admin/profiles", AdminListProfiles);
 superAdminRouter.post("/admin/profiles", AdminCreateProfile);
 superAdminRouter.patch("/admin/profiles/:profileId", AdminUpdateProfile);
 superAdminRouter.delete("/admin/profiles/:profileId", AdminDeleteProfile);
-
 superAdminRouter.get("/admin/user-profiles", ListUserProfiles);
 
 export default superAdminRouter;
