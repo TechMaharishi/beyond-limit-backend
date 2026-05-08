@@ -1,27 +1,23 @@
 import { Request, Response, NextFunction } from "express";
-import { Types } from "mongoose";
+import { Types, isValidObjectId } from "mongoose";
 import { auth } from "@/lib/auth";
 import { fromNodeHeaders } from "better-auth/node";
 import { sendSuccess, sendError } from "@/utils/api-response";
 import cloudinary from "@/config/cloudinary";
 import { SupportTicket } from "@/models/support";
-import type { ISupportTicket } from "@/models/support";
 import { TicketType } from "@/models/ticket-type";
 import admin from "@/config/firebase";
 import { DeviceToken } from "@/models/device-token";
 import { Notification } from "@/models/notification";
 import { sendSupportTicketAlertEmail } from "@/utils/mailer";
 
-/**
- * Standardizes the support ticket response by formatting the user field
- * and ensuring all file fields are included as plain arrays.
- */
+
 const formatTicket = (ticket: any) => {
   const raw = ticket.toObject ? ticket.toObject() : ticket;
   const userField: any = raw.user;
   let userOut = userField;
 
-  // Ensure user subdocument has consistent structure
+
   if (userField && typeof userField === "object" && userField._id) {
     userOut = {
       _id: String(userField._id),
@@ -36,7 +32,7 @@ const formatTicket = (ticket: any) => {
      };
   }
 
-  // Improved file array handling: merge plural and singular fields to ensure visibility
+
   const combinedImageUrls = [
     ...(Array.isArray(raw.imageUrls) ? raw.imageUrls : []),
     ...(raw.imageUrl ? [raw.imageUrl] : [])
@@ -45,7 +41,7 @@ const formatTicket = (ticket: any) => {
 
   const combinedVideoUrls = [
     ...(Array.isArray(raw.videoUrls) ? raw.videoUrls : []),
-    ...(raw.videoUrl ? [raw.videoUrl] : []) // Just in case there was a legacy singular videoUrl
+
   ];
   const uniqueVideoUrls = Array.from(new Set(combinedVideoUrls)).filter(Boolean);
 
@@ -54,7 +50,7 @@ const formatTicket = (ticket: any) => {
     user: userOut,
     imageUrls: uniqueImageUrls,
     videoUrls: uniqueVideoUrls,
-    // Provide singular fallback for very old frontend versions if needed
+
     imageUrl: uniqueImageUrls[0] || "",
   };
   
@@ -65,22 +61,21 @@ const formatTicket = (ticket: any) => {
   return formatted;
 };
 
-// Create ticket
+
 export const createSupportTicket = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
       body: { permissions: { ticket: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canCreate?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -128,8 +123,6 @@ export const createSupportTicket = async (
     const images: any[] = Array.isArray(filesField?.images) ? filesField.images : [];
     const videos: any[] = Array.isArray(filesField?.videos) ? filesField.videos : [];
 
-    // Debug logging for file uploads
-    console.log(`[SupportTicket] Uploading ${images.length} images and ${videos.length} videos`);
 
     for (const f of images) {
       if (!f?.buffer) continue;
@@ -211,7 +204,7 @@ export const createSupportTicket = async (
       slackMessageTs: "",
     });
 
-    // Send Slack notification if it's app technical support
+
     if (typeSlug === "app-technical-support") {
       try {
         const botToken = process.env.SLACK_BOT_TOKEN || "";
@@ -233,7 +226,7 @@ export const createSupportTicket = async (
           { type: "section", text: { type: "mrkdwn", text: `*Description:*\n${description}` } },
         ];
 
-        // Add all images to Slack
+
         for (const url of imageUrls) {
           blocks.push({ type: "image", image_url: url, alt_text: "support_image" });
         }
@@ -261,7 +254,7 @@ export const createSupportTicket = async (
         console.error("[SupportTicket] Slack notification failed:", err);
       }
 
-      // Send Email notification
+
       try {
         const to = process.env.EMAIL_SUPPORT || "";
         if (to) {
@@ -285,11 +278,11 @@ export const createSupportTicket = async (
       }
     }
 
-    // Push notifications to admins
+
     try {
       const adminList = await auth.api.listUsers({
         query: { filterField: "role", filterValue: "admin", limit: 100, offset: 0, sortBy: "createdAt", sortDirection: "desc" },
-        headers: fromNodeHeaders(req.headers),
+        headers: apiHeaders,
       });
       const admins: any[] = ((adminList as any)?.users || []) as any[];
       const adminIds: string[] = admins.map((u: any) => String(u.id)).filter((id: string) => !!id && id !== String((user as any).id));
@@ -335,34 +328,27 @@ export const createSupportTicket = async (
   }
 };
 
-// List tickets
+
 export const listSupportTickets = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
-    const role = (user as any).role;
-    const isAdmin = Array.isArray(role) ? role.includes("admin") : role === "admin";
 
-    if (isAdmin) {
-      const canView = await auth.api.userHasPermission({
-        body: { permissions: { ticket: ["view"] } },
-        headers: fromNodeHeaders(req.headers),
-      });
-      if (!canView?.success) {
-        return sendError(res, 403, "Forbidden: insufficient permissions");
-      }
-    }
+    const canViewAll = await auth.api.userHasPermission({
+      body: { permissions: { ticket: ["resolve"] } },
+      headers: apiHeaders,
+    });
+    const isElevated = canViewAll?.success === true;
 
     const filter: any = {};
-    if (!isAdmin) {
+    if (!isElevated) {
       filter.userId = (user as any).id;
     }
 
@@ -410,7 +396,7 @@ export const listSupportTickets = async (
   }
 };
 
-// Compatibility wrapper for technical support list
+
 export const listAppTechnicalSupportTickets = async (
   req: Request,
   res: Response,
@@ -420,35 +406,31 @@ export const listAppTechnicalSupportTickets = async (
   return listSupportTickets(req, res, next);
 };
 
-// Get single ticket
+
 export const getSupportTicket = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const ticketId = req.params.id;
+    if (!isValidObjectId(ticketId)) return sendError(res, 400, "Invalid ticket ID");
     const ticket = await SupportTicket.findById(ticketId);
     if (!ticket) return sendError(res, 404, "Ticket not found");
 
-    const role = (user as any).role;
-    const isAdmin = Array.isArray(role) ? role.includes("admin") : role === "admin";
     const isOwner = String((ticket as any).userId) === String((user as any).id);
 
-    if (!isOwner && !isAdmin) {
-      const canView = await auth.api.userHasPermission({
-        body: { permissions: { ticket: ["view"] } },
-        headers: fromNodeHeaders(req.headers),
+    if (!isOwner) {
+      const canViewAll = await auth.api.userHasPermission({
+        body: { permissions: { ticket: ["resolve"] } },
+        headers: apiHeaders,
       });
-      if (!canView?.success) {
-        return sendError(res, 403, "Forbidden: insufficient permissions");
-      }
+      if (!canViewAll?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
     }
 
     return sendSuccess(res, 200, "Ticket fetched", formatTicket(ticket));
@@ -457,28 +439,28 @@ export const getSupportTicket = async (
   }
 };
 
-// Resolve ticket
+
 export const resolveSupportTicket = async (
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canUpdate = await auth.api.userHasPermission({
       body: { permissions: { ticket: ["resolve"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canUpdate?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
     }
 
     const { id } = req.params;
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid ticket ID");
     const { message } = req.body;
     if (!message) return sendError(res, 400, "Resolution message is required");
 
@@ -502,7 +484,7 @@ export const resolveSupportTicket = async (
   }
 };
 
-// Ticket Types handlers
+
 export const getAllTicketTypes = async (
   req: Request,
   res: Response,
@@ -537,6 +519,7 @@ export const deleteTicketTypes = async (
 ) => {
   try {
     const { id } = req.params;
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid type ID");
     await TicketType.findByIdAndUpdate(id, { active: false });
     return sendSuccess(res, 200, "Ticket type deleted");
   } catch (error) {
@@ -544,7 +527,7 @@ export const deleteTicketTypes = async (
   }
 };
 
-// Slack interaction handler
+
 export const slackSupportInteract = async (
   req: Request,
   res: Response,
