@@ -38,6 +38,8 @@ The Short Videos module is a core component of the Beyond Limits Learning Hub, d
 | **Get Signed Upload URL** | POST | `/v1/short-videos/:id/signed-upload-url` | N/A | Admin, Owner |
 | **Get Upload Status** | GET | `/v1/short-videos/:id/status` | N/A | Admin, Owner |
 | **Publish Video** | POST | `/v1/short-videos/:id/publish` | N/A | Admin, Owner |
+| **Upload Thumbnail** | POST | `/short-videos/:id/thumbnail` | `shortVideo:update` | Admin, Owner |
+| **Upload Thumbnail (V1)** | POST | `/v1/short-videos/:id/thumbnail` | `shortVideo:update` | Admin, Owner |
 
 ### Enforcement Logic
 - **Authentication Scheme**: Better Auth Session Management. Standard endpoints expect cookies (`better-auth.session_token` / `__Secure-better-auth.session_token`) or `Authorization: Bearer <token>`.
@@ -95,7 +97,36 @@ The Short Videos module is a core component of the Beyond Limits Learning Hub, d
 **Authentication Scheme**: Better Auth Session (Cookie/Bearer)  
 **Required Roles**: Admin, Owner  
 **Headers**: `Cookie` or `Authorization`  
-**Preconditions**: Video must be uploaded (`cloudinaryId` present).
+**Preconditions**: Video must be uploaded (`cloudinaryId` present).  
+**Thumbnail Auto-Generation**: If the user never uploaded a custom thumbnail, one is automatically generated from the first second of the video before publishing.
+
+#### Upload Custom Thumbnail
+**HTTP Method**: `POST`  
+**Route**: `/short-videos/:id/thumbnail` · `/v1/short-videos/:id/thumbnail`  
+**Purpose**: Uploads a custom thumbnail image for a short video, replacing the auto-generated one.  
+**Authentication Scheme**: Better Auth Session (Cookie/Bearer)  
+**Required Permission**: `shortVideo:update`  
+**Required Roles**: Admin, Owner  
+**Headers**: `Content-Type: multipart/form-data`, `Cookie` or `Authorization`  
+**Request Schema**:
+| Field | Type | Required | Constraints |
+| :--- | :--- | :--- | :--- |
+| `thumbnail` | File | Yes | JPEG / PNG / WEBP. Max 5 MB. Field name must be `thumbnail`. |
+
+**Response (200 OK)**:
+```json
+{
+  "success": true,
+  "message": "Thumbnail uploaded",
+  "data": {
+    "id": "65f...",
+    "thumbnailUrl": "https://res.cloudinary.com/..."
+  }
+}
+```
+**Notes**:
+- Re-uploading replaces the previous thumbnail (Cloudinary `overwrite: true`). CDN cache is invalidated automatically.
+- If no custom thumbnail is ever uploaded, the system auto-generates one from the video file on publish.
 
 ### 3.2. Content Management & Viewing
 
@@ -207,9 +238,10 @@ Cookie: better-auth.session_token=eyJhbGciOiJIUzI1Ni...
 1. **Creation**: User creates a "shell" containing metadata via V1 API. Status is set to `draft`.
 2. **Upload Preparation**: User requests signed parameters. Backend enforces ownership and uniqueness of the `public_id`.
 3. **Media Upload**: Client uploads directly to Cloudinary. Backend is idle during this phase.
-4. **Webhook Synchronization**: Cloudinary notifies the backend on completion. Backend populates `cloudinaryId`, `durationSeconds`, and `thumbnailUrl`.
-5. **Publish Validation**: User reviews the draft and publishes. Backend prevents publishing if the video asset is missing or metadata is incomplete.
-6. **Access Control**: On read requests, the video becomes visible to the target audience based on `visibility` gates (e.g., clinicians-only) and `accessLevel` gates (e.g., master-tier users).
+4. **Webhook Synchronization**: Cloudinary notifies the backend on completion. Backend populates `cloudinaryId`, `durationSeconds`, and `thumbnailUrl` (auto-generated from the first second of the video).
+5. **Optional Custom Thumbnail**: User may upload a custom thumbnail via `POST /:id/thumbnail` at any point before or after publishing.
+6. **Publish Validation**: User reviews the draft and publishes. Backend prevents publishing if the video asset is missing or metadata is incomplete. If `thumbnailUrl` is still empty at publish time, it is auto-generated as a final safeguard.
+7. **Access Control**: On read requests, the video becomes visible to the target audience based on `visibility` gates (e.g., clinicians-only) and `accessLevel` gates (e.g., master-tier users).
 
 ---
 

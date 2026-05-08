@@ -1,14 +1,3 @@
-/**
- * Short Videos V1 Controller
- *
- * Implements the two-phase upload flow:
- *   Phase 1 — DRAFT   : create shell → get signed URL → frontend uploads directly to Cloudinary
- *   Phase 2 — PUBLISH : trainer validates all videos ready → publishes
- *
- * Existing /api/short-videos endpoints are untouched.
- * New endpoints live under /api/v1/short-videos.
- */
-
 import { Request, Response, NextFunction } from "express";
 import mongoose from "mongoose";
 import cloudinary from "@/config/cloudinary";
@@ -17,11 +6,11 @@ import { fromNodeHeaders } from "better-auth/node";
 import { ShortVideo } from "@/models/short-videos";
 import { Tag } from "@/models/tags";
 import { sendSuccess, sendError } from "@/utils/api-response";
+import { buildAutoThumbnailUrl } from "@/utils/cloudinary-helpers";
 import logger from "@/utils/logger";
+import { sendShortVideoStatusNotification } from "@/controllers/content-management/short-videos";
 
 const normalizeTag = (s: string) => s.toLowerCase().trim().replace(/\s+/g, "-");
-
-// ─── helpers ────────────────────────────────────────────────────────────────
 
 function buildHlsUrl(publicId: string): string {
   return publicId
@@ -70,16 +59,6 @@ async function validateAndNormalizeTags(
   return { normalized: valid };
 }
 
-// ─── Phase 1: Create shell ───────────────────────────────────────────────────
-
-/**
- * POST /api/v1/short-videos
- *
- * Creates a draft short video without any video file.
- * Returns the shortId so the frontend can request a signed upload URL.
- *
- * Body: { title, description, tags?, accessLevel?, visibility? }
- */
 export const createShortVideoShell = async (
   req: Request,
   res: Response,
@@ -158,21 +137,6 @@ export const createShortVideoShell = async (
   }
 };
 
-// ─── Phase 1: Request signed upload URL ─────────────────────────────────────
-
-/**
- * POST /api/v1/short-videos/:id/signed-upload-url
- *
- * Generates Cloudinary signed upload parameters.
- * The frontend POSTs these + the video file directly to Cloudinary.
- * Cloudinary calls our webhook when the upload finishes.
- *
- * Response:
- * {
- *   uploadUrl: "https://api.cloudinary.com/v1_1/<cloud>/video/upload",
- *   fields: { api_key, timestamp, signature, public_id, folder, resource_type }
- * }
- */
 export const getSignedUploadUrl = async (
   req: Request,
   res: Response,
@@ -214,8 +178,6 @@ export const getSignedUploadUrl = async (
     }
 
     const timestamp = Math.round(Date.now() / 1000);
-    // Include timestamp in public_id so every re-upload gets a unique Cloudinary asset.
-    // Same public_id across uploads causes CDN cache hits (old stream) and stale subtitle webhooks.
     const publicId = `short-videos/${String(video._id)}/${timestamp}`;
     const notificationUrl = `${appBaseUrl}/api/v1/webhooks/cloudinary/upload-complete`;
 
@@ -243,15 +205,6 @@ export const getSignedUploadUrl = async (
   }
 };
 
-// ─── Phase 2: Publish ────────────────────────────────────────────────────────
-
-/**
- * POST /api/v1/short-videos/:id/publish
- *
- * Trainer or admin publishes the short video.
- * Validates that the video file has been uploaded (cloudinaryId is set)
- * and that required fields are present.
- */
 export const publishShortVideo = async (
   req: Request,
   res: Response,
@@ -282,7 +235,6 @@ export const publishShortVideo = async (
       return sendError(res, 400, "Short video is already published");
     }
 
-    // Validate video is uploaded
     if (!video.cloudinaryId) {
       return sendError(
         res,
@@ -291,12 +243,15 @@ export const publishShortVideo = async (
       );
     }
 
-    // Validate required fields
     if (!video.title?.trim() || !video.description?.trim()) {
       return sendError(res, 400, "title and description are required before publishing");
     }
     if (!video.tags || video.tags.length === 0) {
       return sendError(res, 400, "At least one tag is required before publishing");
+    }
+
+    if (!video.thumbnailUrl && video.cloudinaryId) {
+      video.thumbnailUrl = buildAutoThumbnailUrl(video.cloudinaryId, video.durationSeconds || 0);
     }
 
     video.status = "published";
@@ -318,15 +273,6 @@ export const publishShortVideo = async (
   }
 };
 
-// ─── Get video status ────────────────────────────────────────────────────────
-
-/**
- * GET /api/v1/short-videos/:id/status
- *
- * Lightweight poll endpoint for the frontend to check whether the Cloudinary
- * upload webhook has fired and the video record has been populated.
- * Avoids the frontend needing to fetch the full video document while polling.
- */
 export const getShortVideoUploadStatus = async (
   req: Request,
   res: Response,

@@ -14,6 +14,8 @@ import { escapeRegex, normalizeTag } from "@/utils/string";
 import { isValidObjectId } from "@/utils/mongodb";
 import { resolveTagSlugs } from "@/utils/tags";
 import { buildAutoThumbnailUrl, buildHlsUrl } from "@/utils/cloudinary-helpers";
+import logger from "@/utils/logger";
+
 
 const MAX_TAGS = 10;
 const MAX_RESOURCES = 10;
@@ -558,6 +560,8 @@ export const updateShortVideo = async (req: Request, res: Response, next: NextFu
         ? durationSeconds
         : Number(verified?.duration) || video.durationSeconds || 0;
       updates.thumbnailUrl = buildAutoThumbnailUrl(cloudinaryId, dur);
+    } else if (!video.thumbnailUrl && video.cloudinaryId) {
+      updates.thumbnailUrl = buildAutoThumbnailUrl(video.cloudinaryId, video.durationSeconds || 0);
     }
 
     if (updates.cloudinaryId && video.cloudinaryId && updates.cloudinaryId !== video.cloudinaryId) {
@@ -882,6 +886,54 @@ export const listPublishedShortVideos = async (req: Request, res: Response, next
   }
 };
 
+export const sendShortVideoStatusNotification = async (
+  ownerId: string,
+  status: string,
+  videoId: string,
+  videoTitle: string,
+  rejectReason: string
+): Promise<void> => {
+  try {
+    if (!ownerId) return;
+    const tokenDoc = await DeviceToken.findOne({ userId: ownerId }).lean();
+    const titleMsg = status === "published" ? "Short video published" : "Short video rejected";
+    const vTitle = videoTitle || "your short video";
+    const rejectText = rejectReason || "";
+    const bodyMsg =
+      status === "published"
+        ? `Your ${vTitle} has been approved.`
+        : rejectText
+        ? `Your ${vTitle} was declined. Please review the feedback: ${rejectText}`
+        : `Your ${vTitle} was declined. Please review the feedback.`;
+    const event = status === "published" ? "short-video-published" : "short-video-rejected";
+    if (tokenDoc?.deviceToken) {
+      const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
+      if (isExpo) {
+        await fetch("https://exp.host/--/api/v2/push/send", {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({ to: tokenDoc.deviceToken, sound: "default", title: titleMsg, body: bodyMsg }),
+        });
+      } else {
+        await admin.messaging().send({
+          token: tokenDoc.deviceToken,
+          notification: { title: titleMsg, body: bodyMsg },
+          data: { _id: videoId, status, event },
+        } as any);
+      }
+    }
+    try {
+      await Notification.create({
+        userId: ownerId, title: titleMsg, body: bodyMsg,
+        data: { _id: videoId, status, event },
+        read: false,
+      });
+    } catch {}
+  } catch (error) {
+    logger.error(`[ShortVideoNotification] Error sending notification: ${error}`);
+  }
+};
+
 export const updateShortVideoStatus = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const apiHeaders = fromNodeHeaders(req.headers);
@@ -941,45 +993,13 @@ export const updateShortVideoStatus = async (req: Request, res: Response, next: 
     await video.save();
 
     if (isAdmin && (status === "published" || status === "rejected")) {
-      try {
-        const ownerId = String((video as any).user || "");
-        if (ownerId) {
-          const tokenDoc = await DeviceToken.findOne({ userId: ownerId }).lean();
-          const titleMsg = status === "published" ? "Short video published" : "Short video rejected";
-          const vTitle = String((video as any).title || "your short video");
-          const rejectText = String((video as any).rejectReason || "");
-          const bodyMsg = status === "published"
-            ? `Your ${vTitle} has been approved.`
-            : rejectText
-            ? `Your ${vTitle} was declined. Please review the feedback: ${rejectText}`
-            : `Your ${vTitle} was declined. Please review the feedback.`;
-
-          if (tokenDoc?.deviceToken) {
-            const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
-            if (isExpo) {
-              await fetch("https://exp.host/--/api/v2/push/send", {
-                method: "POST",
-                headers: { Accept: "application/json", "Content-Type": "application/json" },
-                body: JSON.stringify({ to: tokenDoc.deviceToken, sound: "default", title: titleMsg, body: bodyMsg }),
-              });
-            } else {
-              await admin.messaging().send({
-                token: tokenDoc.deviceToken,
-                notification: { title: titleMsg, body: bodyMsg },
-                data: { _id: String((video as any)._id), status, event: status === "published" ? "short-video-published" : "short-video-rejected" },
-              } as any);
-            }
-          }
-
-          try {
-            await Notification.create({
-              userId: ownerId, title: titleMsg, body: bodyMsg,
-              data: { _id: String((video as any)._id), status, event: status === "published" ? "short-video-published" : "short-video-rejected" },
-              read: false,
-            });
-          } catch {}
-        }
-      } catch {}
+      await sendShortVideoStatusNotification(
+        String((video as any).user || ""),
+        status,
+        String((video as any)._id),
+        String((video as any).title || ""),
+        String((video as any).rejectReason || "")
+      );
     }
 
     return sendSuccess(res, 200, "Short video status updated", {
@@ -989,6 +1009,62 @@ export const updateShortVideoStatus = async (req: Request, res: Response, next: 
       accessLevel: (video as any).accessLevel, durationSeconds: (video as any).durationSeconds,
       createdAt: video.createdAt, updatedAt: video.updatedAt, user: video.user,
     });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const uploadShortVideoThumbnail = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const { id } = req.params as { id: string };
+
+    if (!isValidObjectId(id)) return sendError(res, 400, "Invalid video ID format.");
+
+    const session = await auth.api.getSession({ headers: apiHeaders });
+    const user = session?.user;
+    if (!user) return sendError(res, 401, "Unauthorized");
+
+    const canUpdate = await auth.api.userHasPermission({
+      body: { permissions: { shortVideo: ["update"] } },
+      headers: apiHeaders,
+    });
+    if (!canUpdate?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
+
+    const video = await ShortVideo.findById(id);
+    if (!video) return sendError(res, 404, "Short video not found");
+
+    if (!isRoleIn((user as any).role, "admin") && !video.user.equals(user.id)) {
+      return sendError(res, 403, "Forbidden: only admin or owner can update thumbnail");
+    }
+
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file?.buffer) return sendError(res, 400, "Thumbnail image is required");
+
+    const maxSize = 5 * 1024 * 1024;
+    if (file.buffer.length > maxSize) return sendError(res, 400, "Thumbnail size exceeds 5 MB");
+
+    const result: any = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        {
+          resource_type: "image",
+          folder: "short-video-thumbnails",
+          public_id: `thumb_${id}`,
+          overwrite: true,
+          invalidate: true,
+        },
+        (error, uploaded) => {
+          if (error) return reject(error);
+          resolve(uploaded);
+        }
+      ).end(file.buffer);
+    });
+
+    const thumbnailUrl = String(result?.secure_url || "");
+    video.thumbnailUrl = thumbnailUrl;
+    await video.save();
+
+    return sendSuccess(res, 200, "Thumbnail uploaded", { id: video._id, thumbnailUrl });
   } catch (error) {
     return next(error);
   }

@@ -14,6 +14,7 @@ import {
   updateShortVideoStatus,
   addShortVideoResource,
   removeShortVideoResource,
+  uploadShortVideoThumbnail,
 } from "@/controllers/content-management/short-videos";
 import { retryCaptions } from "@/controllers/content-management/retryCaptions";
 
@@ -34,5 +35,6 @@ router.post("/short-videos/:id/resources", writeLimiter, resourceUpload.array("f
 router.delete("/short-videos/:id/resources/:resourceId", writeLimiter, removeShortVideoResource);
 
 router.post("/short-videos/:id/retry-subtitles", writeLimiter, retryCaptions);
+router.post("/short-videos/:id/thumbnail", writeLimiter, resourceUpload.single("thumbnail"), uploadShortVideoThumbnail);
 
 export default router;
