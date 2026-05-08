@@ -12,7 +12,7 @@ import { sendLearningAssignmentEmail } from "@/utils/mailer";
 import { isRoleIn } from "@/utils/roles";
 import { isValidObjectId } from "@/utils/mongodb";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 
 const MAX_PAGE_SIZE = 100;
 
@@ -75,7 +75,7 @@ function buildProgressShape(prog: { watchedSeconds: number; completed: boolean }
 
 async function fetchShortMap(shortIds: string[]) {
   if (shortIds.length === 0) return new Map<string, any>();
-  const unique = [...new Set(shortIds)];
+  const unique = Array.from(new Set(shortIds));
   const shorts = await ShortVideo.find({ _id: { $in: unique } })
     .select("title description thumbnailUrl tags status accessLevel visibility durationSeconds createdAt updatedAt createdBy")
     .lean();
@@ -97,7 +97,60 @@ async function fetchProgressMap(trackingId: string, shortIds: string[]) {
   return map;
 }
 
-// ─── createShortAssignment ────────────────────────────────────────────────────
+function dispatchShortAssignmentAlerts({
+  userId,
+  shortVideoId,
+  assignerName,
+  targetEmail,
+  targetName,
+  learningTitle,
+}: {
+  userId: string;
+  shortVideoId: string;
+  assignerName: string;
+  targetEmail: string;
+  targetName: string;
+  learningTitle: string;
+}): void {
+  const title = "New learning assigned";
+  const body = `New short assigned by ${assignerName}`;
+
+  void (async () => {
+    try {
+      const tokenDoc = await DeviceToken.findOne({ userId }).lean();
+      if (tokenDoc?.deviceToken) {
+        const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
+        if (isExpo) {
+          await fetch("https://exp.host/--/api/v2/push/send", {
+            method: "POST",
+            headers: { Accept: "application/json", "Content-Type": "application/json" },
+            body: JSON.stringify({ to: tokenDoc.deviceToken, sound: "default", title, body }),
+          });
+        } else {
+          await admin.messaging().send({
+            token: tokenDoc.deviceToken,
+            notification: { title, body },
+            data: { _id: shortVideoId, event: "short-assigned" },
+          } as any);
+        }
+      }
+      await Notification.create({
+        userId, title, body,
+        data: { _id: shortVideoId, event: "short-assigned" },
+        read: false,
+      }).catch(() => {});
+    } catch {}
+  })();
+
+  void sendLearningAssignmentEmail({
+    to: targetEmail,
+    firstName: targetName,
+    learningTitle,
+    assignedByName: assignerName,
+  }).catch(() => {});
+}
+
+
 
 export const createShortAssignment = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -124,8 +177,10 @@ export const createShortAssignment = async (req: Request, res: Response, next: N
     };
     if (!userId || !shortVideoId) return sendError(res, 400, "userId and shortVideoId are required");
     if (!isValidObjectId(shortVideoId)) return sendError(res, 400, "shortVideoId is not a valid ObjectId");
+    if (!isValidObjectId(userId)) return sendError(res, 400, "userId is not a valid ObjectId");
+    if (profileId && !isValidObjectId(profileId)) return sendError(res, 400, "profileId is not a valid ObjectId");
 
-    // Fetch video and target user in parallel — independent lookups
+
     const [video, listResult] = await Promise.all([
       ShortVideo.findById(shortVideoId).select("status title").lean(),
       auth.api.listUsers({
@@ -147,7 +202,7 @@ export const createShortAssignment = async (req: Request, res: Response, next: N
       return sendError(res, 403, `Assignee must have role ${allowedTargetRoles.join("/")}`);
     }
 
-    // User-role accounts assign per-profile so each profile has its own assignment set
+
     const isUserTarget = isRoleIn(targetRole, "user");
     if (isUserTarget && !profileId) {
       return sendError(res, 400, "profileId is required when assigning to a user account");
@@ -174,42 +229,14 @@ export const createShortAssignment = async (req: Request, res: Response, next: N
       return sendSuccess(res, 200, "Short already assigned");
     }
 
-    // Push notification + in-app notification (fire-and-forget — do not await)
-    void (async () => {
-      try {
-        const tokenDoc = await DeviceToken.findOne({ userId }).lean();
-        const title = "New learning assigned";
-        const body = `New short assigned by ${String((user as any).name || "Unknown")}`;
-        if (tokenDoc?.deviceToken) {
-          const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
-          if (isExpo) {
-            await fetch("https://exp.host/--/api/v2/push/send", {
-              method: "POST",
-              headers: { Accept: "application/json", "Content-Type": "application/json" },
-              body: JSON.stringify({ to: tokenDoc.deviceToken, sound: "default", title, body }),
-            });
-          } else {
-            await admin.messaging().send({
-              token: tokenDoc.deviceToken,
-              notification: { title, body },
-              data: { _id: String(shortVideoId), event: "short-assigned" },
-            } as any);
-          }
-        }
-        await Notification.create({
-          userId, title, body,
-          data: { _id: String(shortVideoId), event: "short-assigned" },
-          read: false,
-        }).catch(() => {});
-      } catch {}
-    })();
-
-    void sendLearningAssignmentEmail({
-      to: String((targetUser as any)?.email || ""),
-      firstName: String((targetUser as any)?.name || ""),
+    dispatchShortAssignmentAlerts({
+      userId,
+      shortVideoId: String(shortVideoId),
+      assignerName: String((user as any).name || "Unknown"),
+      targetEmail: String((targetUser as any)?.email || ""),
+      targetName: String((targetUser as any)?.name || ""),
       learningTitle: String((video as any)?.title || ""),
-      assignedByName: String((user as any)?.name || ""),
-    }).catch(() => {});
+    });
 
     return sendSuccess(res, 201, "Short assigned to user");
   } catch (error) {
@@ -217,7 +244,7 @@ export const createShortAssignment = async (req: Request, res: Response, next: N
   }
 };
 
-// ─── deleteShortAssignment ────────────────────────────────────────────────────
+
 
 export const deleteShortAssignment = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -244,14 +271,16 @@ export const deleteShortAssignment = async (req: Request, res: Response, next: N
     };
     if (!userId || !shortVideoId) return sendError(res, 400, "userId and shortVideoId are required");
     if (!isValidObjectId(shortVideoId)) return sendError(res, 400, "shortVideoId is not a valid ObjectId");
+    if (!isValidObjectId(userId)) return sendError(res, 400, "userId is not a valid ObjectId");
+    if (profileId && !isValidObjectId(profileId)) return sendError(res, 400, "profileId is not a valid ObjectId");
 
-    // Admin can unassign any assignment; trainer/trainee only their own
+
     const filter: any = { assignedToId: userId, shortVideoId };
-    if (profileId) filter.profileId = profileId;
+    filter.profileId = profileId || "";
+    
     if (!isAdmin) {
       filter.assignedById = (user as any).id;
       filter.assignedByRole = assignedByRole;
-      if (!profileId) filter.profileId = "";
     }
 
     const result = await ShortAssignment.deleteOne(filter);
@@ -265,7 +294,7 @@ export const deleteShortAssignment = async (req: Request, res: Response, next: N
   }
 };
 
-// ─── deleteShortAssignmentsBulk ───────────────────────────────────────────────
+
 
 export const deleteShortAssignmentsBulk = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -289,7 +318,7 @@ export const deleteShortAssignmentsBulk = async (req: Request, res: Response, ne
     if (items.length === 0) return sendError(res, 400, "items must be a non-empty array");
     if (items.length > 200) return sendError(res, 400, "Too many items; max 200");
 
-    // Validate and collect unique conditions to delete
+
     type DeleteCondition = { assignedToId: string; shortVideoId: string; profileId?: string };
     const conditions: DeleteCondition[] = [];
     const invalid: Array<{ userId: string; shortVideoId: string; message: string }> = [];
@@ -307,10 +336,17 @@ export const deleteShortAssignmentsBulk = async (req: Request, res: Response, ne
         invalid.push({ userId, shortVideoId, message: "shortVideoId is not a valid ObjectId" });
         continue;
       }
+      if (!isValidObjectId(userId)) {
+        invalid.push({ userId, shortVideoId, message: "userId is not a valid ObjectId" });
+        continue;
+      }
+      if (profileId && !isValidObjectId(profileId)) {
+        invalid.push({ userId, shortVideoId, message: "profileId is not a valid ObjectId" });
+        continue;
+      }
 
       const cond: DeleteCondition = { assignedToId: userId, shortVideoId };
-      if (profileId) cond.profileId = profileId;
-      else if (!isAdmin) cond.profileId = "";
+      cond.profileId = profileId || "";
       conditions.push(cond);
     }
 
@@ -318,7 +354,7 @@ export const deleteShortAssignmentsBulk = async (req: Request, res: Response, ne
       return sendError(res, 400, "No valid items to unassign", { invalid });
     }
 
-    // Admin can unassign any assignment; trainer/trainee only their own
+
     const filter: any = { $or: conditions };
     if (!isAdmin) {
       filter.assignedById = (user as any).id;
@@ -337,9 +373,7 @@ export const deleteShortAssignmentsBulk = async (req: Request, res: Response, ne
   }
 };
 
-// ─── listShortAssignmentsForUser ──────────────────────────────────────────────
-// Admin / trainer / trainee view of shorts assigned to a specific user account.
-// Pass ?profileId= to scope to a single profile (for role=user targets).
+
 
 export const listShortAssignmentsForUser = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -357,8 +391,10 @@ export const listShortAssignmentsForUser = async (req: Request, res: Response, n
 
     const { userId } = req.params as { userId?: string };
     if (!userId || !userId.trim()) return sendError(res, 400, "userId param is required");
+    if (!isValidObjectId(userId)) return sendError(res, 400, "userId is not a valid ObjectId");
 
     const profileId = req.query.profileId as string | undefined;
+    if (profileId && !isValidObjectId(profileId)) return sendError(res, 400, "profileId is not a valid ObjectId");
     const { limit, page, offset } = parsePagination(req.query);
 
     const filter: any = { assignedToId: userId };
@@ -372,7 +408,7 @@ export const listShortAssignmentsForUser = async (req: Request, res: Response, n
     const shortIds = docs.map((d: any) => String(d.shortVideoId));
     const progressTrackingId = profileId || userId;
 
-    // Fetch video details and progress in parallel
+
     const [shortMap, progressMap] = await Promise.all([
       fetchShortMap(shortIds),
       fetchProgressMap(progressTrackingId, shortIds),
@@ -399,9 +435,7 @@ export const listShortAssignmentsForUser = async (req: Request, res: Response, n
   }
 };
 
-// ─── listMyShortAssignments ───────────────────────────────────────────────────
-// Any authenticated user sees shorts assigned to them.
-// For role=user: scoped to the active profile (activeProfileId in session).
+
 
 export const listMyShortAssignments = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -434,7 +468,7 @@ export const listMyShortAssignments = async (req: Request, res: Response, next: 
     const shortIds = assignments.map((a: any) => String(a.shortVideoId));
     const progressTrackingId = resolveTrackingId(callerRole, userId, activeProfileId);
 
-    // Fetch video details and progress in parallel
+
     const [shortMap, progressMap] = await Promise.all([
       fetchShortMap(shortIds),
       fetchProgressMap(progressTrackingId, shortIds),
@@ -461,8 +495,7 @@ export const listMyShortAssignments = async (req: Request, res: Response, next: 
   }
 };
 
-// ─── listShortAssignmentsByMe ─────────────────────────────────────────────────
-// Admin / trainer / trainee see the shorts they personally assigned.
+
 
 export const listShortAssignmentsByMe = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -508,7 +541,7 @@ export const listShortAssignmentsByMe = async (req: Request, res: Response, next
   }
 };
 
-// ─── createShortAssignmentsBulk ───────────────────────────────────────────────
+
 
 export const createShortAssignmentsBulk = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -537,13 +570,13 @@ export const createShortAssignmentsBulk = async (req: Request, res: Response, ne
     for (const it of items) {
       const uid = typeof it?.userId === "string" ? it.userId : "";
       const sid = typeof it?.shortVideoId === "string" ? it.shortVideoId : "";
-      if (uid && sid && isValidObjectId(sid)) { uniqueUserIds.add(uid); uniqueShortIds.add(sid); }
+      if (uid && sid && isValidObjectId(sid) && isValidObjectId(uid)) { uniqueUserIds.add(uid); uniqueShortIds.add(sid); }
     }
     if (uniqueUserIds.size === 0 || uniqueShortIds.size === 0) {
       return sendError(res, 400, "items must contain valid userId and shortVideoId");
     }
 
-    // Fetch published shorts and all target users in parallel
+
     const [publishedShorts, userFetchResults] = await Promise.all([
       ShortVideo.find({ _id: { $in: Array.from(uniqueShortIds) as any }, status: "published" })
         .select("_id title").lean(),
@@ -571,7 +604,7 @@ export const createShortAssignmentsBulk = async (req: Request, res: Response, ne
       if (u) userInfoById.set(u.id, { role: u.role, email: u.email, name: u.name });
     }
 
-    // ── Phase 1: validate each item and build the bulkWrite ops ─────────────────
+
 
     type ValidItem = {
       userId: string;
@@ -598,6 +631,16 @@ export const createShortAssignmentsBulk = async (req: Request, res: Response, ne
       }
       if (!isValidObjectId(shortVideoId)) {
         results.push({ userId, shortVideoId, status: "error", message: "shortVideoId is not a valid ObjectId" });
+        failureCount++;
+        continue;
+      }
+      if (!isValidObjectId(userId)) {
+        results.push({ userId, shortVideoId, status: "error", message: "userId is not a valid ObjectId" });
+        failureCount++;
+        continue;
+      }
+      if (itemProfileId && !isValidObjectId(itemProfileId)) {
+        results.push({ userId, shortVideoId, status: "error", message: "profileId is not a valid ObjectId" });
         failureCount++;
         continue;
       }
@@ -629,7 +672,7 @@ export const createShortAssignmentsBulk = async (req: Request, res: Response, ne
       results.push({ userId, shortVideoId, status: "pending" }); // filled in after bulkWrite
     }
 
-    // ── Phase 2: single bulkWrite for all valid items ────────────────────────────
+
 
     let successCount = 0;
 
@@ -653,7 +696,7 @@ export const createShortAssignmentsBulk = async (req: Request, res: Response, ne
 
       const bulkResult = await ShortAssignment.bulkWrite(ops, { ordered: false });
 
-      // `upsertedIds` is a map of op-index → ObjectId for newly inserted docs
+
       const insertedIndices = new Set<number>(
         Object.keys(bulkResult.upsertedIds ?? {}).map(Number)
       );
@@ -663,44 +706,14 @@ export const createShortAssignmentsBulk = async (req: Request, res: Response, ne
         const wasInserted = insertedIndices.has(i);
 
         if (wasInserted) {
-          const title = "New learning assigned";
-          const body = `New short assigned by ${String((user as any).name || "Unknown")}`;
-
-          // Fire-and-forget push + in-app notification
-          void (async () => {
-            try {
-              const tokenDoc = await DeviceToken.findOne({ userId: vi.userId }).lean();
-              if (tokenDoc?.deviceToken) {
-                const isExpo = /^ExponentPushToken\[.+\]$/.test(tokenDoc.deviceToken);
-                if (isExpo) {
-                  await fetch("https://exp.host/--/api/v2/push/send", {
-                    method: "POST",
-                    headers: { Accept: "application/json", "Content-Type": "application/json" },
-                    body: JSON.stringify({ to: tokenDoc.deviceToken, sound: "default", title, body }),
-                  });
-                } else {
-                  await admin.messaging().send({
-                    token: tokenDoc.deviceToken,
-                    notification: { title, body },
-                    data: { _id: String(vi.shortVideoId), event: "short-assigned" },
-                  } as any);
-                }
-              }
-              await Notification.create({
-                userId: vi.userId, title, body,
-                data: { _id: String(vi.shortVideoId), event: "short-assigned" },
-                read: false,
-              }).catch(() => {});
-            } catch {}
-          })();
-
-          // Fire-and-forget email
-          void sendLearningAssignmentEmail({
-            to: vi.targetInfo.email,
-            firstName: vi.targetInfo.name,
+          dispatchShortAssignmentAlerts({
+            userId: vi.userId,
+            shortVideoId: vi.shortVideoId,
+            assignerName: String((user as any).name || "Unknown"),
+            targetEmail: vi.targetInfo.email,
+            targetName: vi.targetInfo.name,
             learningTitle: shortTitleById.get(vi.shortVideoId) || "",
-            assignedByName: String((user as any)?.name || ""),
-          }).catch(() => {});
+          });
 
           results[vi.originalIndex] = {
             userId: vi.userId,
