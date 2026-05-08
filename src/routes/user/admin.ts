@@ -6,6 +6,7 @@ const superAdminRouter = express.Router();
 
 superAdminRouter.post("/admin/create-user", CreateRolebaseUser);
 superAdminRouter.get("/admin/list-user/all", ListUser);
+// We need to remove this API from mobile app.
 superAdminRouter.get("/admin/list-user", ListUserBadPagination);
 superAdminRouter.post("/admin/set-user-role", SetUserRole);
 superAdminRouter.post("/admin/reset-user-password", ResetUserPassword);

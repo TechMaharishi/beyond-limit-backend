@@ -18,13 +18,6 @@ import { buildAutoThumbnailUrl, buildHlsUrl } from "@/utils/cloudinary-helpers";
 const MAX_TAGS = 10;
 const MAX_RESOURCES = 10;
 
-// ─── progress tracking ───────────────────────────────────────────────────────
-
-/**
- * Returns the tracking ID for progress records.
- * - Admin / Trainer / Trainee → user account ID
- * - User role → activeProfileId from session (required; error if missing)
- */
 function resolveProgressTrackingId(
   user: any,
   session: any
@@ -38,8 +31,6 @@ function resolveProgressTrackingId(
   }
   return { id: String(user.id) };
 }
-
-// ─── resource validation ─────────────────────────────────────────────────────
 
 type IResourceInput = { name: string; url: string; fileType?: string; cloudinaryPublicId?: string };
 
@@ -72,12 +63,6 @@ function parseResources(
     })),
   };
 }
-
-// ─── createShortVideo ────────────────────────────────────────────────────────
-// Creates a new short video record.
-// Accessible by: Admin, Trainer, Trainee (User is blocked via RBAC — shortVideo:create).
-// Thumbnail: uses provided thumbnailUrl, or auto-generates from cloudinaryId if omitted.
-// Resources: optional array of attached documents/files ({ name, url, fileType }).
 
 export const createShortVideo = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -140,14 +125,12 @@ export const createShortVideo = async (req: Request, res: Response, next: NextFu
     const duration = Number.isFinite(durationInput) && durationInput > 0
       ? durationInput : Number(verified?.duration) || 0;
 
-    // Use provided thumbnail; auto-generate only if omitted and cloudinaryId is available
     const finalThumbnailUrl = thumbnailUrl
       ? thumbnailUrl
       : cloudinaryId
       ? buildAutoThumbnailUrl(cloudinaryId, duration)
       : "";
 
-    // Tag validation — error if tags are supplied but none are valid (even in draft mode)
     let normalizedTags: string[] = [];
     if (tags) {
       const raw = Array.isArray(tags) ? tags : tags.split(",").map((t) => t.trim()).filter(Boolean);
@@ -187,7 +170,6 @@ export const createShortVideo = async (req: Request, res: Response, next: NextFu
       resources: parsedResources,
     });
 
-    // Notify admins about the new submission (fire-and-forget)
     try {
       const adminList = await auth.api.listUsers({
         query: { filterField: "role", filterValue: "admin", limit: 100, offset: 0, sortBy: "createdAt", sortDirection: "desc" },
@@ -236,11 +218,6 @@ export const createShortVideo = async (req: Request, res: Response, next: NextFu
   }
 };
 
-// ─── deleteShortVideo ────────────────────────────────────────────────────────
-// Deletes a short video record plus its Cloudinary video asset and any
-// Cloudinary-hosted resource files attached to the video.
-// Admin → any video. Trainer / Trainee → own videos only.
-
 export const deleteShortVideo = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const apiHeaders = fromNodeHeaders(req.headers);
@@ -267,12 +244,10 @@ export const deleteShortVideo = async (req: Request, res: Response, next: NextFu
 
     if (!isAdmin && !isOwner) return sendError(res, 403, "Forbidden: only admin or owner can delete");
 
-    // Destroy the main video asset
     if (video.cloudinaryId) {
       try { await cloudinary.uploader.destroy(video.cloudinaryId, { resource_type: "video" }); } catch {}
     }
 
-    // Destroy any Cloudinary-hosted resource files
     const cloudinaryResources = (video.resources ?? []).filter((r) => r.cloudinaryPublicId);
     for (const resource of cloudinaryResources) {
       try { await cloudinary.uploader.destroy(resource.cloudinaryPublicId!); } catch {}
@@ -286,11 +261,6 @@ export const deleteShortVideo = async (req: Request, res: Response, next: NextFu
     return next(error);
   }
 };
-
-// ─── removeShortVideoFile ────────────────────────────────────────────────────
-// Removes only the video file from Cloudinary and clears media fields,
-// keeping the short video record (title, description, tags, etc.) intact.
-// Admin → any video. Trainer / Trainee → own videos only.
 
 export const removeShortVideoFile = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -344,11 +314,6 @@ export const removeShortVideoFile = async (req: Request, res: Response, next: Ne
   }
 };
 
-// ─── listShortVideosForManagement ────────────────────────────────────────────
-// Management view — returns all shorts (both visibilities) for the requesting
-// creator or, for admins, the full catalogue filtered by status.
-// Accessible by: Admin, Trainer, Trainee only (blocked for User role).
-
 export const listShortVideosForManagement = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const apiHeaders = fromNodeHeaders(req.headers);
@@ -387,7 +352,6 @@ export const listShortVideosForManagement = async (req: Request, res: Response, 
     }
 
     if (q) {
-      // Use text index when available; the escaped literal regex is a safe fallback
       const safe = escapeRegex(q);
       baseConditions.push({ $or: [{ title: { $regex: safe, $options: "i" } }, { description: { $regex: safe, $options: "i" } }] });
     }
@@ -433,11 +397,6 @@ export const listShortVideosForManagement = async (req: Request, res: Response, 
   }
 };
 
-// ─── getShortVideoById ───────────────────────────────────────────────────────
-// Returns a single short video.
-// Visibility gate: User role cannot view "clinicians" shorts.
-// Access level gate (User role only): free / develop / master tier check.
-
 export const getShortVideoById = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const apiHeaders = fromNodeHeaders(req.headers);
@@ -470,7 +429,6 @@ export const getShortVideoById = async (req: Request, res: Response, next: NextF
         return sendError(res, 403, "Forbidden: this content is for clinicians only");
       }
 
-      // Tier-based access check — applies to User role only
       if (!isClinician) {
         const accountType = String((user as any).accountType ?? "free");
         const accessMatrix: Record<string, string[]> = {
@@ -497,13 +455,6 @@ export const getShortVideoById = async (req: Request, res: Response, next: NextF
     return next(error);
   }
 };
-
-// ─── updateShortVideo ────────────────────────────────────────────────────────
-// Updates metadata, video file, or thumbnail for a short video.
-// Resources are managed separately via addShortVideoResource / removeShortVideoResource.
-// Thumbnail: uses provided thumbnailUrl, or auto-generates from the new cloudinaryId
-//            if a new video is supplied without a thumbnail.
-// Admin → any video. Trainer / Trainee → own videos only.
 
 export const updateShortVideo = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -586,7 +537,6 @@ export const updateShortVideo = async (req: Request, res: Response, next: NextFu
     }
 
     if (status) {
-      // "approved" is not a valid status — only draft/pending/published/rejected
       if (!["draft", "pending", "published", "rejected"].includes(status)) {
         return sendError(res, 400, "Invalid status. Valid values: draft, pending, published, rejected");
       }
@@ -601,7 +551,6 @@ export const updateShortVideo = async (req: Request, res: Response, next: NextFu
       updates.visibility = visibility;
     }
 
-    // Resolve thumbnail: explicit value wins; auto-generate only when a new video is set without a thumbnail
     if (thumbnailUrl) {
       updates.thumbnailUrl = thumbnailUrl;
     } else if (cloudinaryId) {
@@ -611,7 +560,6 @@ export const updateShortVideo = async (req: Request, res: Response, next: NextFu
       updates.thumbnailUrl = buildAutoThumbnailUrl(cloudinaryId, dur);
     }
 
-    // Remove old Cloudinary asset when replacing with a different video
     if (updates.cloudinaryId && video.cloudinaryId && updates.cloudinaryId !== video.cloudinaryId) {
       try { await cloudinary.uploader.destroy(video.cloudinaryId, { resource_type: "video" }); } catch {}
     }
@@ -622,11 +570,6 @@ export const updateShortVideo = async (req: Request, res: Response, next: NextFu
     return next(error);
   }
 };
-
-// ─── addShortVideoResource ───────────────────────────────────────────────────
-// Appends one resource to the video's resources array.
-// Enforces the maximum of MAX_RESOURCES resources per video.
-// Admin → any video. Trainer / Trainee → own videos only.
 
 export const addShortVideoResource = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -657,8 +600,6 @@ export const addShortVideoResource = async (req: Request, res: Response, next: N
     const files = (req as any).files as Express.Multer.File[] | undefined;
     const hasFiles = Array.isArray(files) && files.length > 0;
 
-    // Support mixed input: uploaded files + optional JSON resource entries
-    // names[] must align with files[] when uploading; body.resources is for URL-only entries
     const urlResources: IResourceInput[] = [];
     if (req.body?.resources) {
       const parsed = typeof req.body.resources === "string"
@@ -675,7 +616,6 @@ export const addShortVideoResource = async (req: Request, res: Response, next: N
       return sendError(res, 400, `Adding ${totalIncoming} resource(s) would exceed the maximum of ${MAX_RESOURCES}`);
     }
 
-    // Upload all files to Cloudinary in parallel
     const uploadedResources: IResourceInput[] = [];
     if (hasFiles) {
       const names: string[] = Array.isArray(req.body?.names)
@@ -722,11 +662,6 @@ export const addShortVideoResource = async (req: Request, res: Response, next: N
   }
 };
 
-// ─── removeShortVideoResource ────────────────────────────────────────────────
-// Removes one resource by its _id from the video's resources array.
-// Also destroys the Cloudinary asset if cloudinaryPublicId is set on the resource.
-// Admin → any video. Trainer / Trainee → own videos only.
-
 export const removeShortVideoResource = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const apiHeaders = fromNodeHeaders(req.headers);
@@ -768,11 +703,6 @@ export const removeShortVideoResource = async (req: Request, res: Response, next
     return next(error);
   }
 };
-
-// ─── trackShortVideoProgress ─────────────────────────────────────────────────
-// Records how far a viewer has watched a short video (idempotent — stores max).
-// Admin / Trainer / Trainee → tracked by user account ID.
-// User role → tracked by activeProfileId (must be set in session).
 
 export const trackShortVideoProgress = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -823,10 +753,6 @@ export const trackShortVideoProgress = async (req: Request, res: Response, next:
   }
 };
 
-// ─── getShortVideoProgress ───────────────────────────────────────────────────
-// Returns the current watch progress for a short video.
-// Tracking key follows the same role-based rules as trackShortVideoProgress.
-
 export const getShortVideoProgress = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const apiHeaders = fromNodeHeaders(req.headers);
@@ -859,11 +785,6 @@ export const getShortVideoProgress = async (req: Request, res: Response, next: N
     return next(error);
   }
 };
-
-// ─── listPublishedShortVideos ─────────────────────────────────────────────────
-// Returns published shorts available to the requesting user.
-// Admin / Trainer / Trainee → all visibilities (clinicians + users + all).
-// User role → cannot see "clinicians" shorts (users + all only).
 
 export const listPublishedShortVideos = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -923,8 +844,6 @@ export const listPublishedShortVideos = async (req: Request, res: Response, next
       .sort(sort).skip(offset).limit(limit)
       .lean();
 
-    // Resolve tracking ID — User role uses activeProfileId, others use user.id
-    // If no profile is selected for User role, progress defaults to 0 (don't block the listing)
     const { id: trackingId } = resolveProgressTrackingId(user, session);
 
     const videoIds = videos.map((v: any) => String(v._id));
@@ -962,11 +881,6 @@ export const listPublishedShortVideos = async (req: Request, res: Response, next
     return next(error);
   }
 };
-
-// ─── updateShortVideoStatus ──────────────────────────────────────────────────
-// Changes the moderation status of a short video.
-// Admin       → published or rejected (any video)
-// Trainer / Trainee → draft or pending (own videos only)
 
 export const updateShortVideoStatus = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -1026,7 +940,6 @@ export const updateShortVideoStatus = async (req: Request, res: Response, next: 
     video.status = status as any;
     await video.save();
 
-    // Notify the video owner when admin publishes or rejects (fire-and-forget)
     if (isAdmin && (status === "published" || status === "rejected")) {
       try {
         const ownerId = String((video as any).user || "");
@@ -1080,7 +993,5 @@ export const updateShortVideoStatus = async (req: Request, res: Response, next: 
     return next(error);
   }
 };
-
-// ─── Tag management (kept for backward compatibility with existing routes) ───
 
 export { createTag, getTag, deactivateTag, activateTag, deleteTag } from "@/controllers/tags/tags";
