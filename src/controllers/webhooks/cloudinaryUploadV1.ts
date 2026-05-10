@@ -17,6 +17,8 @@
 import { Request, Response, NextFunction } from "express";
 import cloudinary from "@/config/cloudinary";
 import { ShortVideo } from "@/models/short-videos";
+import { Course } from "@/models/course-videos";
+import { CourseSubtitleJob } from "@/models/course-subtitle-job";
 import { sendSuccess, sendError } from "@/utils/api-response";
 import logger from "@/utils/logger";
 
@@ -74,6 +76,123 @@ function extractShortVideoId(publicId: string): string | null {
   return match ? match[1] : null;
 }
 
+/**
+ * Extracts courseId, chapterIndex, lessonIndex from a course-videos public_id.
+ * Format: "course-videos/<courseId>/<chapterIndex>/<lessonIndex>/<timestamp>"
+ */
+function extractCourseVideoParams(publicId: string): { courseId: string; chapterIndex: number; lessonIndex: number } | null {
+  const match = publicId.match(/^course-videos\/([a-f0-9]{24})\/(\d+)\/(\d+)\/\d+$/);
+  if (!match) return null;
+  return {
+    courseId: match[1],
+    chapterIndex: Number(match[2]),
+    lessonIndex: Number(match[3]),
+  };
+}
+
+async function handleCourseVideoUpload(
+  publicId: string,
+  durationSeconds: number,
+  secureUrl: string
+): Promise<void> {
+  const params = extractCourseVideoParams(publicId);
+  if (!params) {
+    logger.warn(`[CloudinaryUploadV1] course-videos public_id format unrecognised: ${publicId}`);
+    return;
+  }
+
+  const { courseId, chapterIndex, lessonIndex } = params;
+
+  const course = await Course.findById(courseId);
+  if (!course) {
+    logger.warn(`[CloudinaryUploadV1] Course not found: ${courseId}`);
+    return;
+  }
+
+  const chapter = (course.chapters as any[])[chapterIndex];
+  if (!chapter) {
+    logger.warn(`[CloudinaryUploadV1] Chapter ${chapterIndex} not found in course ${courseId}`);
+    return;
+  }
+
+  const lesson = (chapter.lessons as any[])?.[lessonIndex];
+  if (!lesson) {
+    logger.warn(`[CloudinaryUploadV1] Lesson ${lessonIndex} not found in chapter ${chapterIndex}`);
+    return;
+  }
+
+  // Destroy old asset if replacing
+  lesson.videos = Array.isArray(lesson.videos) ? lesson.videos : [];
+  const existingVideo = lesson.videos[0] as any;
+  const previousCloudinaryId = String(existingVideo?.cloudinaryId || "").trim();
+  if (previousCloudinaryId && previousCloudinaryId !== publicId) {
+    try {
+      await cloudinary.uploader.destroy(previousCloudinaryId, { resource_type: "video", invalidate: true });
+      logger.info(`[CloudinaryUploadV1] Destroyed old course asset: ${previousCloudinaryId}`);
+    } catch (e) {
+      logger.warn(`[CloudinaryUploadV1] Could not destroy old course asset ${previousCloudinaryId}:`, e);
+    }
+  }
+
+  const hlsUrl = buildHlsUrl(publicId);
+  const thumbnailUrl = buildThumbnailUrl(publicId, durationSeconds);
+  const isSameVideo = existingVideo?.cloudinaryId === publicId;
+
+  const videoPayload = {
+    title: lesson.title || "Lesson Video",
+    cloudinaryUrl: secureUrl || hlsUrl,
+    cloudinaryId: publicId,
+    durationSeconds,
+    thumbnailUrl,
+    subtitles: isSameVideo && Array.isArray(existingVideo?.subtitles) ? existingVideo.subtitles : [],
+    subtitle_status: "pending" as const,
+    subtitle_failure_reason: null,
+    subtitle_retry_count: 0,
+    last_subtitle_attempt: null,
+    retryable: false,
+  };
+
+  if (lesson.videos.length > 0) {
+    lesson.videos[0] = { ...lesson.videos[0], ...videoPayload };
+  } else {
+    lesson.videos.push(videoPayload);
+  }
+
+  course.markModified("chapters");
+  await course.save();
+
+  // Enqueue subtitle job (fire-and-forget)
+  try {
+    const NOT_BEFORE_DELAY_MS = 2 * 60 * 1000;
+    await CourseSubtitleJob.bulkWrite(
+      [{
+        updateOne: {
+          filter: { courseId: course._id, cloudinaryId: publicId },
+          update: {
+            $set: { subtitle_status: "pending", subtitle_failure_reason: null },
+            $setOnInsert: {
+              courseId: course._id,
+              cloudinaryId: publicId,
+              subtitle_retry_count: 0,
+              last_subtitle_attempt: null,
+              retryable: false,
+              not_before: new Date(Date.now() + NOT_BEFORE_DELAY_MS),
+            },
+          },
+          upsert: true,
+        },
+      }],
+      { ordered: false }
+    );
+  } catch (e) {
+    logger.error(`[CloudinaryUploadV1] Failed to enqueue subtitle job for course ${courseId}:`, e);
+  }
+
+  logger.info(
+    `[CloudinaryUploadV1] Course lesson video updated: course=${courseId} chapter=${chapterIndex} lesson=${lessonIndex} (duration: ${durationSeconds}s)`
+  );
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 export const handleCloudinaryUploadCompleteV1 = async (
@@ -105,6 +224,17 @@ export const handleCloudinaryUploadCompleteV1 = async (
       return sendError(res, 400, "Missing public_id in webhook payload");
     }
 
+    // Cloudinary upload payload fields
+    const rawDuration = Number(body?.duration ?? body?.video?.bit_rate ?? 0);
+    const durationSeconds = Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : 0;
+    const secureUrl = String(body?.secure_url || "");
+
+    // Route to the correct handler based on public_id prefix
+    if (publicId.startsWith("course-videos/")) {
+      await handleCourseVideoUpload(publicId, durationSeconds, secureUrl);
+      return sendSuccess(res, 200, "Upload webhook processed", { publicId, durationSeconds });
+    }
+
     const shortVideoId = extractShortVideoId(publicId);
     if (!shortVideoId) {
       logger.warn(`[CloudinaryUploadV1] public_id format unrecognised: ${publicId}`);
@@ -128,11 +258,6 @@ export const handleCloudinaryUploadCompleteV1 = async (
         logger.warn(`[CloudinaryUploadV1] Could not destroy old asset ${previousCloudinaryId}:`, e);
       }
     }
-
-    // Cloudinary upload payload fields
-    const rawDuration = Number(body?.duration ?? body?.video?.bit_rate ?? 0);
-    const durationSeconds = Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : 0;
-    const secureUrl = String(body?.secure_url || "");
 
     const hlsUrl = buildHlsUrl(publicId);
     const thumbnailUrl = buildThumbnailUrl(publicId, durationSeconds);

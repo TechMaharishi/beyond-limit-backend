@@ -96,7 +96,7 @@ const enqueueCourseSubtitleJobs = async (courseId: any, chapters: any[]): Promis
     if (cloudinaryIds.length === 0) return;
 
     // Deduplicate
-    const unique = [...new Set(cloudinaryIds)];
+    const unique = Array.from(new Set(cloudinaryIds));
 
     const NOT_BEFORE_DELAY_MS = 2 * 60 * 1000; // 2 minutes — Cloudinary needs time to process
     const ops = unique.map((cid) => ({
@@ -139,9 +139,8 @@ export const uploadLessonVideo = async (
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -149,7 +148,7 @@ export const uploadLessonVideo = async (
 
     const canUpload = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canUpload?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -184,7 +183,7 @@ export const uploadLessonVideo = async (
       thumbnailUrl,
     });
   } catch (error) {
-    console.error("Error in uploadLessonVideo controller:", error);
+    logger.error("Error in uploadLessonVideo controller:", error);
     next(error);
   }
 };
@@ -196,15 +195,14 @@ export const createCourseBasic = async (
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canCreate = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canCreate?.success)
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -324,7 +322,7 @@ export const createCourseBasic = async (
             sortBy: "createdAt",
             sortDirection: "desc",
           },
-          headers: fromNodeHeaders(req.headers),
+          headers: apiHeaders,
         });
         const admins: any[] = ((adminList as any)?.users || []) as any[];
         const adminIds: string[] = admins
@@ -403,15 +401,14 @@ export const updateCourse = async (
       thumbnailCloudinaryId?: string;
     };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canEdit?.success)
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -593,15 +590,14 @@ export const addChapterToCourse = async (
       title?: string;
     };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canEdit?.success)
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -652,15 +648,14 @@ export const deleteChapter = async (
     if (!Number.isInteger(cIdx) || cIdx < 0)
       return sendError(res, 400, "Invalid chapterIndex");
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canEdit?.success)
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -689,7 +684,7 @@ export const deleteChapter = async (
         try {
           await cloudinary.uploader.destroy(vidId, { resource_type: "video" });
         } catch (cloudErr) {
-          console.error("Cloudinary deletion failed:", cloudErr);
+          logger.error("Cloudinary deletion failed:", cloudErr);
         }
       }
     }
@@ -736,15 +731,14 @@ export const addLessonToChapter = async (
     };
     if (!title) return sendError(res, 400, "Lesson title is required");
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canEdit?.success)
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -859,15 +853,14 @@ export const addQuizToChapter = async (
       }>;
     };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canEdit?.success)
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -995,16 +988,15 @@ export const deleteQuizFromChapter = async (
     if (!Number.isInteger(qIdx) || qIdx < 0) {
       return sendError(res, 400, "Invalid quizIndex");
     }
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
     }
     const canEdit = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canEdit?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -1056,13 +1048,14 @@ export const submitQuizResponses = async (
       answers: Array<{ questionIndex: number; selectedOptionIndexes: number[] }>; // required
     };
 
-    const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { course: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canView?.success) return sendError(res, 403, "Forbidden: insufficient permissions");
 
@@ -1139,6 +1132,9 @@ export const submitQuizResponses = async (
 };
 
 
+const MAX_COURSE_RESOURCES = 10;
+const MAX_RESOURCE_SIZE_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
+
 //Upload Resources.
 export const uploadCourseResources = async (
   req: Request,
@@ -1148,15 +1144,14 @@ export const uploadCourseResources = async (
   try {
     const { id } = req.params as { id: string };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canEdit = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canEdit?.success)
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -1174,48 +1169,62 @@ export const uploadCourseResources = async (
     if (!Array.isArray(files) || files.length === 0)
       return sendError(res, 400, "No files provided");
 
-    const MAX_SIZE_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
+    const existingCount = Array.isArray(course.resources) ? course.resources.length : 0;
+    if (existingCount + files.length > MAX_COURSE_RESOURCES) {
+      return sendError(
+        res,
+        400,
+        `Adding ${files.length} resource(s) would exceed the maximum of ${MAX_COURSE_RESOURCES}`
+      );
+    }
+
     const skippedTooLarge: { name: string; sizeBytes: number }[] = [];
-    const failedUploads: { name: string; error: string }[] = [];
+    const filesToUpload = files.filter((file) => {
+      if (file.size > MAX_RESOURCE_SIZE_BYTES) {
+        skippedTooLarge.push({ name: file.originalname, sizeBytes: file.size });
+        return false;
+      }
+      return true;
+    });
+
+    const results = await Promise.all(
+      filesToUpload.map((file) =>
+        new Promise<{ resource: any } | { error: string; name: string }>((resolve) => {
+          const stream = cloudinary.uploader.upload_stream(
+            {
+              resource_type: "auto",
+              folder: `courses/${id}/resources`,
+              use_filename: true,
+              unique_filename: true,
+            },
+            (err, result) => {
+              if (err) return resolve({ error: String(err?.message || err), name: file.originalname });
+              resolve({
+                resource: {
+                  name: file.originalname,
+                  url: result!.secure_url,
+                  cloudinaryId: result!.public_id,
+                  mimeType: file.mimetype,
+                  sizeBytes: file.size,
+                },
+              });
+            }
+          );
+          stream.end(file.buffer);
+        })
+      )
+    );
+
     const addedResources: any[] = [];
+    const failedUploads: { name: string; error: string }[] = [];
 
-    // Helper: upload buffer to Cloudinary via stream
-    const uploadBuffer = (buffer: Buffer, filename: string) =>
-      new Promise<any>((resolve, reject) => {
-        const folder = `courses/${id}/resources`;
-        const stream = cloudinary.uploader.upload_stream(
-          { resource_type: "auto", folder, filename_override: filename },
-          (err, result) => {
-            if (err) return reject(err);
-            resolve(result);
-          }
-        );
-        const readable = new Readable();
-        readable.push(buffer);
-        readable.push(null);
-        readable.pipe(stream);
-      });
-
-    for (const file of files) {
-      try {
-        if (file.size > MAX_SIZE_BYTES) {
-          skippedTooLarge.push({ name: file.originalname, sizeBytes: file.size });
-          continue;
-        }
-
-        const result = await uploadBuffer(file.buffer, file.originalname);
-        const resource = {
-          name: file.originalname,
-          url: result.secure_url,
-          cloudinaryId: result.public_id,
-          mimeType: file.mimetype,
-          sizeBytes: file.size,
-        };
+    for (const r of results) {
+      if ("error" in r) {
+        failedUploads.push({ name: r.name, error: r.error });
+      } else {
         course.resources = Array.isArray(course.resources) ? course.resources : [];
-        course.resources.push(resource as any);
-        addedResources.push(resource);
-      } catch (err: any) {
-        failedUploads.push({ name: file.originalname, error: String(err?.message || err) });
+        course.resources.push(r.resource as any);
+        addedResources.push(r.resource);
       }
     }
 
@@ -1250,9 +1259,8 @@ export const deleteCourseResource = async (
       return sendError(res, 400, "Invalid resourceIndex");
     }
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -1260,7 +1268,7 @@ export const deleteCourseResource = async (
 
     const canEdit = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canEdit?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -1297,7 +1305,7 @@ export const deleteCourseResource = async (
       try {
         await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
       } catch (cloudErr) {
-        console.error("Cloudinary deletion failed:", cloudErr);
+        logger.error("Cloudinary deletion failed:", cloudErr);
         // Continue even if Cloudinary cleanup fails
       }
     }
@@ -1329,9 +1337,8 @@ export const deleteCourse = async (
       return sendError(res, 400, "Invalid course ID format.");
     }
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -1365,7 +1372,7 @@ export const deleteCourse = async (
               resource_type: "video",
             });
           } catch (cloudErr) {
-            console.error("Cloudinary deletion failed:", cloudErr);
+            logger.error("Cloudinary deletion failed:", cloudErr);
           }
         }
       }
@@ -1399,7 +1406,7 @@ export const deleteCourse = async (
       try {
         await cloudinary.uploader.destroy(thumbId, { resource_type: "image" });
       } catch (cloudErr) {
-        console.error("Cloudinary deletion failed for thumbnail:", cloudErr);
+        logger.error("Cloudinary deletion failed for thumbnail:", cloudErr);
       }
     }
 
@@ -1418,7 +1425,7 @@ export const deleteCourse = async (
       try {
         await cloudinary.uploader.destroy(resId, { resource_type: resourceType });
       } catch (cloudErr) {
-        console.error("Cloudinary deletion failed for resource:", cloudErr);
+        logger.error("Cloudinary deletion failed for resource:", cloudErr);
       }
     }
 
@@ -1430,7 +1437,7 @@ export const deleteCourse = async (
       // @ts-ignore - attempt to delete folder
       await (cloudinary as any).api.delete_folder(resourcesPrefix);
     } catch (cloudErr) {
-      console.warn("Cloudinary admin cleanup warning:", (cloudErr as any)?.message || cloudErr);
+      logger.warn("Cloudinary admin cleanup warning:", (cloudErr as any)?.message || cloudErr);
     }
 
     const deleteResult = await Course.findByIdAndDelete(id);
@@ -1451,9 +1458,8 @@ export const getAllCourses = async (
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -1461,7 +1467,7 @@ export const getAllCourses = async (
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { courseVideoStatus: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canView?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -1523,7 +1529,7 @@ export const getAllCourses = async (
     const role = (user as any).role;
     const isAdmin = Array.isArray(role) ? role.includes("admin") : role === "admin";
     const isTrainer = Array.isArray(role) ? role.includes("trainer") : role === "trainer";
-    
+    const isTrainee = Array.isArray(role) ? role.includes("trainee") : role === "trainee";
 
     let visibilityFilter: any;
     if (isAdmin) {
@@ -1559,6 +1565,10 @@ export const getAllCourses = async (
           status: { $in: ["draft", "pending", "published"] },
         };
       }
+    } else if (isTrainee) {
+      visibilityFilter = statusQuery
+        ? { status: statusQuery }
+        : { status: "published" };
     } else {
       visibilityFilter = { _id: { $exists: false } };
     }
@@ -1594,7 +1604,7 @@ export const getAllCourses = async (
     const total = await Course.countDocuments(mongoFilter);
     const data = await Course.find(mongoFilter)
       .select(
-        "title description tags status accessLevel createdAt updatedAt user createdBy chapters thumbnailUrl totalDurationSeconds totalQuizzes totalChapters"
+        "title description tags status accessLevel visibility createdAt updatedAt user createdBy chapters thumbnailUrl totalDurationSeconds totalQuizzes totalChapters"
       )
       .sort(sort)
       .skip(offset)
@@ -1643,9 +1653,8 @@ export const getCourse = async (
   try {
     const { id } = req.params as { id: string };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -1653,7 +1662,7 @@ export const getCourse = async (
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { course: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canView?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -1665,17 +1674,30 @@ export const getCourse = async (
     }
 
     const role = (user as any).role;
-    const isAdmin = Array.isArray(role)
-      ? role.includes("admin")
-      : role === "admin";
+    const isClinician = Array.isArray(role)
+      ? role.some((r: string) => ["admin", "trainer", "trainee"].includes(r))
+      : ["admin", "trainer", "trainee"].includes(role);
     const isOwner = course.user.toString() === user.id;
-    if (!isAdmin && !isOwner) {
+
+    // admin / trainer / trainee and course owners bypass all access checks
+    if (!isClinician && !isOwner) {
       if (course.status !== "published") {
         return sendError(res, 403, "Forbidden: course not accessible");
       }
-      const visible = canViewVideo(role as any, (course as any).visibility);
-      if (!visible) {
-        return sendError(res, 403, "Forbidden: visibility not allowed");
+      // user role: only visibility "all" is accessible
+      if ((course as any).visibility !== "all") {
+        return sendError(res, 403, "Forbidden: this content is for clinicians only");
+      }
+      // user role: accessLevel gating via accountType
+      const accountType = String((user as any).accountType ?? "free");
+      const accessMatrix: Record<string, string[]> = {
+        free:    ["free"],
+        develop: ["free", "develop"],
+        master:  ["free", "develop", "master"],
+      };
+      const allowed = accessMatrix[accountType] ?? ["free"];
+      if (!allowed.includes((course as any).accessLevel)) {
+        return sendError(res, 403, "Forbidden: upgrade your account to access this content");
       }
     }
 
@@ -1862,9 +1884,8 @@ export const deleteLessonVideo = async (
       return sendError(res, 400, "Invalid videoIndex");
     }
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -1872,7 +1893,7 @@ export const deleteLessonVideo = async (
 
     const canEdit = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canEdit?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -1909,7 +1930,7 @@ export const deleteLessonVideo = async (
       try {
         await cloudinary.uploader.destroy(cloudinaryId, { resource_type: "video" });
       } catch (cloudErr) {
-        console.error("Cloudinary deletion failed:", cloudErr);
+        logger.error("Cloudinary deletion failed:", cloudErr);
         // Proceed even if Cloudinary deletion fails
       }
     }
@@ -1948,16 +1969,15 @@ export const deleteLessonFromChapter = async (
     if (!Number.isInteger(lIdx) || lIdx < 0) {
       return sendError(res, 400, "Invalid lessonIndex");
     }
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
     }
     const canEdit = await auth.api.userHasPermission({
       body: { permissions: { course: ["create"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canEdit?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -2016,9 +2036,8 @@ export const updateLessonProgress = async (
     };
     const { watchedSeconds } = req.body as { watchedSeconds: number };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -2109,9 +2128,8 @@ export const getCourseWithProgress = async (
   try {
     const { id } = req.params as { id: string };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -2119,7 +2137,7 @@ export const getCourseWithProgress = async (
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { course: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canView?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -2327,9 +2345,8 @@ export const getAllCoursesByUser = async (
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -2337,7 +2354,7 @@ export const getAllCoursesByUser = async (
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { course: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canView?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -2517,6 +2534,7 @@ export const getAllCoursesByUser = async (
         tags: Array.isArray((c as any).tags) ? (c as any).tags : [],
         status: (c as any).status,
         accessLevel: (c as any).accessLevel || null,
+        visibility: (c as any).visibility || null,
         user: String((c as any).user || ""),
         createdBy: (c as any).createdBy || null,
         thumbnailUrl: (c as any).thumbnailUrl || "",
@@ -2552,9 +2570,8 @@ export const getCompletedCoursesByUser = async (
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -2562,7 +2579,7 @@ export const getCompletedCoursesByUser = async (
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { course: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canView?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -2704,15 +2721,14 @@ export const saveCourseForUser = async (
       return sendError(res, 400, "Invalid course ID format.");
     }
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { course: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canView?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -2760,15 +2776,14 @@ export const getSavedCoursesByUser = async (
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
     const canView = await auth.api.userHasPermission({
       body: { permissions: { course: ["view"] } },
-      headers: fromNodeHeaders(req.headers),
+      headers: apiHeaders,
     });
     if (!canView?.success) {
       return sendError(res, 403, "Forbidden: insufficient permissions");
@@ -2871,9 +2886,8 @@ export const changeCourseStatus = async (
       rejectReason?: string;
     };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) {
       return sendError(res, 401, "Unauthorized");
@@ -2989,7 +3003,7 @@ export const changeCourseStatus = async (
         }
       }
     } catch (e) {
-      console.error("Error sending notification:", e);
+      logger.error("Error sending notification:", e);
     }
     return sendSuccess(res, 200, "Course status updated", updated);
   } catch (error) {
@@ -3004,9 +3018,8 @@ export const deleteCloudinaryVideo = async (
   next: NextFunction
 ) => {
   try {
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
@@ -3052,9 +3065,8 @@ export const deleteCourseThumbnail = async (
   try {
     const { id } = req.params as { id: string };
 
-    const session = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-    });
+    const apiHeaders = fromNodeHeaders(req.headers);
+    const session = await auth.api.getSession({ headers: apiHeaders });
     const user = session?.user;
     if (!user) return sendError(res, 401, "Unauthorized");
 
