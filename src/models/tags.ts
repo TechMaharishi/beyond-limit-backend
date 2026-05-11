@@ -21,8 +21,6 @@ const TagSchema = new Schema<ITag>(
   { timestamps: true }
 );
 
-// TTL index: documents with deletedAt set will be removed ~6 months after deletion
-// 6 months approximated as 180 days -> 15552000 seconds
 TagSchema.index({ deletedAt: 1 }, { expireAfterSeconds: 15552000 });
 
 export const Tag = mongoose.model<ITag>("Tag", TagSchema, "tags");

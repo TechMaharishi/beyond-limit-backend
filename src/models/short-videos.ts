@@ -36,14 +36,11 @@ interface IShortVideo extends Document {
   durationSeconds: number;
   resources: IResource[];
   subtitles?: ISubtitleTrack[];
-  /* ── subtitle-pipeline fields ── */
   subtitle_status: "pending" | "processing" | "completed" | "failed";
   subtitle_failure_reason?: string | null;
   subtitle_retry_count: number;
   last_subtitle_attempt?: Date | null;
   retryable: boolean;
-  /** Earliest time the worker may pick this job up.
-   *  Set to now+2min on upload, now on manual retry. */
   not_before: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -58,7 +55,6 @@ const CreatedBySchema = new Schema(
   { _id: false }
 );
 
-// _id is enabled (default) so each resource gets a stable ID for individual removal
 const ResourceSchema = new Schema({
   name: { type: String, required: true, trim: true },
   url: { type: String, required: true },
@@ -123,8 +119,6 @@ const ShortVideoSchema = new Schema<IShortVideo>(
       },
     },
     subtitles: { type: [SubtitleTrackSchema], default: [] },
-
-    /* ── subtitle-pipeline fields ── */
     subtitle_status: {
       type: String,
       enum: ["pending", "processing", "completed", "failed"],
@@ -134,19 +128,13 @@ const ShortVideoSchema = new Schema<IShortVideo>(
     subtitle_retry_count: { type: Number, default: 0 },
     last_subtitle_attempt: { type: Date, default: null },
     retryable: { type: Boolean, default: false },
-    // Default to now so existing records without this field are immediately eligible
     not_before: { type: Date, default: () => new Date(), index: true },
   },
   { timestamps: true }
 );
 
-// Text index for efficient title/description search
 ShortVideoSchema.index({ title: "text", description: "text" });
-
-// Compound index for the published-videos listing query (status + visibility + createdAt)
 ShortVideoSchema.index({ status: 1, visibility: 1, createdAt: -1 });
-
-// Compound index for the management listing query (user + status)
 ShortVideoSchema.index({ user: 1, status: 1, createdAt: -1 });
 
 export const ShortVideo = mongoose.model<IShortVideo>(

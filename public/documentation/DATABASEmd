@@ -1,0 +1,713 @@
+# Database Documentation
+
+**Beyond Limits Learning Hub — MongoDB Schema Reference**
+
+> All collections use Mongoose with `timestamps: true` unless noted. Dates are stored as UTC.
+
+---
+
+## Table of Contents
+
+1. [profiles](#1-profiles)
+2. [courses](#2-courses)
+3. [course-subtitle-jobs](#3-course-subtitle-jobs)
+4. [course-assignments](#4-course-assignments)
+5. [course-video-progress](#5-course-video-progress)
+6. [lesson-video-progress](#6-lesson-video-progress)
+7. [course-popularity](#7-course-popularity)
+8. [saved-courses](#8-saved-courses)
+9. [short-videos](#9-short-videos)
+10. [short-assignments](#10-short-assignments)
+11. [short-video-progress](#11-short-video-progress)
+12. [clinical-assignments](#12-clinical-assignments)
+13. [quiz-responses](#13-quiz-responses)
+14. [notifications](#14-notifications)
+15. [device-tokens](#15-device-tokens)
+16. [support-tickets](#16-support-tickets)
+17. [ticket-types](#17-ticket-types)
+18. [tags](#18-tags)
+
+---
+
+## 1. `profiles`
+
+Stores named profiles that belong to a user account (similar to Netflix profiles).
+
+**Model file:** `src/models/profile.ts`  
+**Mongoose model:** `Profile`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | Primary key |
+| `userId` | String | ✅ | — | Better Auth user ID |
+| `name` | String | ✅ | — | Max 50 chars, trimmed |
+| `avatar` | String | — | `""` | URL to avatar image |
+| `isDefault` | Boolean | — | `false` | Only one default per user |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `userId` | Single field index |
+| `{ userId: 1, isDefault: 1 }` | Unique, partial filter `{ isDefault: true }` — enforces one default profile per user |
+
+---
+
+## 2. `courses`
+
+Main course collection. Chapters, lessons, and videos are all embedded subdocuments.
+
+**Model file:** `src/models/course-videos.ts`  
+**Mongoose model:** `Course`
+
+### Top-level Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | Primary key |
+| `title` | String | — | `""` | |
+| `description` | String | — | `""` | |
+| `tags` | String[] | — | `[]` | |
+| `status` | String | — | `"draft"` | Enum: `draft`, `pending`, `published`, `rejected` |
+| `rejectReason` | String | — | `""` | Populated when status is `rejected` |
+| `accessLevel` | String | — | `"free"` | Enum: `free`, `develop`, `master` |
+| `visibility` | String | — | `"users"` | Enum: `clinicians`, `users`, `all` |
+| `user` | ObjectId → User | ✅ | — | Owner/creator |
+| `createdBy` | Object | — | — | Snapshot: `{ _id, name, email }` |
+| `thumbnailUrl` | String | — | `""` | |
+| `thumbnailCloudinaryId` | String | — | `""` | |
+| `chapters` | Chapter[] | — | `[]` | Embedded array |
+| `resources` | Resource[] | — | `[]` | Embedded array |
+| `totalDurationSeconds` | Number | — | `0` | Denormalised sum |
+| `totalQuizzes` | Number | — | `0` | Denormalised count |
+| `totalChapters` | Number | — | `0` | Denormalised count |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Embedded: `Chapter`
+
+| Field | Type | Default |
+|---|---|---|
+| `_id` | ObjectId | auto (enabled) |
+| `title` | String | required |
+| `lessons` | Lesson[] | `[]` |
+| `quizzes` | Quiz[] | `[]` |
+
+### Embedded: `Lesson`
+
+| Field | Type | Default |
+|---|---|---|
+| `title` | String | required |
+| `description` | String | `""` |
+| `videos` | LessonVideo[] | `[]` |
+
+### Embedded: `LessonVideo`
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `cloudinaryUrl` | String | required | |
+| `cloudinaryId` | String | required | Used by subtitle pipeline |
+| `durationSeconds` | Number | `0` | |
+| `thumbnailUrl` | String | — | |
+| `subtitles` | SubtitleTrack[] | `[]` | Generated VTT/SRT tracks |
+| `subtitle_status` | String | `"pending"` | Enum: `pending`, `processing`, `completed`, `failed` |
+| `subtitle_failure_reason` | String | `null` | |
+| `subtitle_retry_count` | Number | `0` | |
+| `last_subtitle_attempt` | Date | `null` | |
+| `retryable` | Boolean | `false` | |
+
+### Embedded: `SubtitleTrack`
+
+| Field | Type | Default |
+|---|---|---|
+| `lang` | String | `"en"` |
+| `label` | String | `""` |
+| `url` | String | `""` |
+| `format` | String | `"vtt"` (enum: `vtt`, `srt`) |
+| `default` | Boolean | `false` |
+
+### Embedded: `Quiz`
+
+| Field | Type |
+|---|---|
+| `title` | String (required) |
+| `questions` | QuizQuestion[] |
+
+### Embedded: `QuizQuestion`
+
+| Field | Type | Notes |
+|---|---|---|
+| `type` | String | Enum: `single`, `multiple` |
+| `prompt` | String | required |
+| `options` | `{ text: String }[]` | |
+| `correctOptionIndexes` | Number[] | Validated: unique, in-bounds, count matches type |
+
+### Embedded: `CourseResource`
+
+| Field | Type |
+|---|---|
+| `name` | String (required) |
+| `url` | String (required) |
+| `cloudinaryId` | String (optional) |
+| `mimeType` | String (optional) |
+| `sizeBytes` | Number ≥ 0 (optional) |
+
+---
+
+## 3. `course-subtitle-jobs`
+
+Queue collection for the course video subtitle pipeline. One document per unique `(courseId, cloudinaryId)` pair.
+
+**Model file:** `src/models/course-subtitle-job.ts`  
+**Mongoose model:** `CourseSubtitleJob`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `courseId` | ObjectId → Course | ✅ | — | |
+| `cloudinaryId` | String | ✅ | — | Identifies the video within the course |
+| `subtitle_status` | String | — | `"pending"` | Enum: `pending`, `processing`, `completed`, `failed` |
+| `subtitle_failure_reason` | String | — | `null` | |
+| `subtitle_retry_count` | Number | — | `0` | |
+| `last_subtitle_attempt` | Date | — | `null` | |
+| `retryable` | Boolean | — | `false` | |
+| `not_before` | Date | — | `now` | Worker won't pick up the job until this time (upload delay guard) |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `courseId` | Single |
+| `cloudinaryId` | Single |
+| `subtitle_status` | Single |
+| `not_before` | Single |
+| `{ courseId: 1, cloudinaryId: 1 }` | **Unique** — prevents duplicate jobs |
+
+---
+
+## 4. `course-assignments`
+
+Records which courses have been assigned to which users and by whom.
+
+**Model file:** `src/models/course-assignment.ts`  
+**Mongoose model:** `CourseAssignment`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `courseId` | ObjectId → Course | ✅ | — | |
+| `assignedToId` | String | ✅ | — | Recipient user ID |
+| `profileId` | String | — | `""` | Empty for trainee/trainer; profile ID for user-role recipients |
+| `assignedById` | String | ✅ | — | Assigner user ID |
+| `assignedByRole` | String | ✅ | — | Enum: `trainer`, `trainee`, `admin` |
+| `assignedByName` | String | — | `""` | Display name snapshot |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `courseId` | Single |
+| `assignedToId` | Single |
+| `assignedById` | Single |
+| `{ assignedToId, courseId, assignedByRole, profileId }` | **Unique** — one assignment per target/course/role/profile combination |
+| `{ assignedToId, profileId, createdAt: -1 }` | Listing assignments for a user |
+| `{ assignedById, assignedByRole, createdAt: -1 }` | Listing assignments made by an assigner |
+
+---
+
+## 5. `course-video-progress`
+
+Tracks overall course-level watch progress per user.
+
+**Model file:** `src/models/course-video-progress.ts`  
+**Mongoose model:** `CourseVideoProgress`
+
+### Fields
+
+| Field | Type | Required | Default |
+|---|---|---|---|
+| `_id` | ObjectId | auto | — |
+| `userId` | ObjectId → User | ✅ | — |
+| `courseId` | ObjectId → Course | ✅ | — |
+| `watchedSeconds` | Number ≥ 0 | ✅ | `0` |
+| `completed` | Boolean | ✅ | `false` |
+| `createdAt` | Date | auto | — |
+| `updatedAt` | Date | auto | — |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `{ userId: 1, courseId: 1 }` | **Unique** — one progress doc per user/course |
+
+---
+
+## 6. `lesson-video-progress`
+
+Tracks watch progress at the lesson level, including per-video seconds within the lesson.
+
+**Model file:** `src/models/lesson-video-progress.ts`  
+**Mongoose model:** `LessonVideoProgress`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `userId` | ObjectId → User | ✅ | — | |
+| `courseId` | ObjectId → Course | ✅ | — | |
+| `chapterId` | ObjectId | ✅ | — | Chapter subdocument ID |
+| `lessonIndex` | Number ≥ 0 | ✅ | — | Index of lesson within chapter |
+| `watchedSeconds` | Number ≥ 0 | ✅ | `0` | Total seconds for the lesson |
+| `videoWatchedSeconds` | Number[] | — | `[]` | Per-video seconds array |
+| `completed` | Boolean | ✅ | `false` | |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `{ userId, courseId, chapterId, lessonIndex }` | **Unique** |
+
+---
+
+## 7. `course-popularity`
+
+Stores computed popularity scores for courses. Used to power "Popular Courses" features.
+
+**Model file:** `src/models/popular-course.ts`  
+**Mongoose model:** `CoursePopularity`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `courseId` | ObjectId → Course | ✅ | — | |
+| `window` | String | ✅ | — | Enum: `"all"` (time window of computation) |
+| `score` | Number | ✅ | `0` | Composite popularity score |
+| `savedCount` | Number | ✅ | `0` | |
+| `uniqueWatchers` | Number | ✅ | `0` | |
+| `totalWatchedSeconds` | Number | ✅ | `0` | |
+| `completionCount` | Number | ✅ | `0` | |
+| `computedAt` | Date | ✅ | `now` | Last computation timestamp |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `courseId` | Single |
+| `window` | Single |
+| `{ courseId, window }` | **Unique** — one score doc per course/window |
+| `{ window, score: -1, computedAt: -1 }` | Fast popularity-sorted listing |
+
+---
+
+## 8. `saved-courses`
+
+Tracks which courses a user has bookmarked/saved.
+
+**Model file:** `src/models/saved-course.ts`  
+**Mongoose model:** `SavedCourse`
+
+### Fields
+
+| Field | Type | Required |
+|---|---|---|
+| `_id` | ObjectId | auto |
+| `userId` | String | ✅ |
+| `courseId` | String | ✅ |
+| `createdAt` | Date | auto |
+| `updatedAt` | Date | auto |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `userId` | Single |
+| `courseId` | Single |
+| `{ userId, courseId }` | **Unique** |
+
+---
+
+## 9. `short-videos`
+
+Short-form video content (similar to YouTube Shorts / TikTok). Includes embedded subtitle pipeline state.
+
+**Model file:** `src/models/short-videos.ts`  
+**Mongoose model:** `ShortVideo`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `title` | String | — | `""` | |
+| `description` | String | — | `""` | |
+| `tags` | String[] | — | `[]` | Max 10 tags |
+| `status` | String | — | `"draft"` | Enum: `draft`, `pending`, `published`, `rejected` |
+| `rejectReason` | String | — | `""` | |
+| `user` | ObjectId → User | ✅ | — | Owner |
+| `createdBy` | Object | — | — | Snapshot: `{ _id, name, email }` |
+| `cloudinaryUrl` | String | — | `""` | |
+| `cloudinaryId` | String | — | `""` | Used by subtitle worker |
+| `thumbnailUrl` | String | — | `""` | |
+| `accessLevel` | String | — | `"free"` | Enum: `free`, `develop`, `master` |
+| `visibility` | String | — | `"users"` | Enum: `clinicians`, `users`, `all` |
+| `durationSeconds` | Number | — | `0` | |
+| `resources` | Resource[] | — | `[]` | Max 10 resources |
+| `subtitles` | SubtitleTrack[] | — | `[]` | Generated tracks |
+| `subtitle_status` | String | — | `"pending"` | Enum: `pending`, `processing`, `completed`, `failed` |
+| `subtitle_failure_reason` | String | — | `null` | |
+| `subtitle_retry_count` | Number | — | `0` | |
+| `last_subtitle_attempt` | Date | — | `null` | |
+| `retryable` | Boolean | — | `false` | |
+| `not_before` | Date | — | `now` | Upload delay guard for the worker |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Embedded: `Resource`
+
+| Field | Type |
+|---|---|
+| `_id` | ObjectId (auto, for stable removal) |
+| `name` | String (required, trimmed) |
+| `url` | String (required) |
+| `fileType` | String (default `""`) |
+| `cloudinaryPublicId` | String (default `""`) |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `not_before` | Single |
+| `{ title: "text", description: "text" }` | Full-text search |
+| `{ status, visibility, createdAt: -1 }` | Published listing query |
+| `{ user, status, createdAt: -1 }` | Management listing query |
+
+---
+
+## 10. `short-assignments`
+
+Records which short videos have been assigned to which users.
+
+**Model file:** `src/models/short-assignment.ts`  
+**Mongoose model:** `ShortAssignment`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `shortVideoId` | ObjectId → ShortVideo | ✅ | — | |
+| `assignedToId` | String | ✅ | — | Recipient user ID |
+| `profileId` | String | — | `""` | Empty for trainee/trainer; profile ID for user-role recipients |
+| `assignedById` | String | ✅ | — | |
+| `assignedByRole` | String | ✅ | — | Enum: `trainer`, `trainee`, `admin` |
+| `assignedByName` | String | — | `""` | |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `shortVideoId` | Single |
+| `assignedToId` | Single |
+| `assignedById` | Single |
+| `{ assignedToId, shortVideoId, assignedByRole, profileId }` | **Unique** |
+| `{ assignedToId, profileId, createdAt: -1 }` | User assignment listing |
+| `{ assignedById, assignedByRole, createdAt: -1 }` | Assigner listing |
+
+---
+
+## 11. `short-video-progress`
+
+Tracks watch progress for short videos. Uses `trackingId` which is either a user account ID or a profile ID.
+
+**Model file:** `src/models/short-video-progress.ts`  
+**Mongoose model:** `ShortVideoProgress`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `trackingId` | String | ✅ | — | User account ID (admin/trainer/trainee) or profile ID (user role) |
+| `shortVideoId` | ObjectId → ShortVideo | ✅ | — | |
+| `watchedSeconds` | Number ≥ 0 | ✅ | `0` | |
+| `completed` | Boolean | ✅ | `false` | |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `{ trackingId, shortVideoId }` | **Unique** |
+
+---
+
+## 12. `clinical-assignments`
+
+Maps a user/profile pair to their assigned clinicians (trainers and trainees).
+
+**Model file:** `src/models/clinical-assignment.ts`  
+**Mongoose model:** `ClinicalAssignment`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `userId` | String | ✅ | — | |
+| `profileId` | String | ✅ | `""` | |
+| `clinicians` | Clinician[] | — | `[]` | Max 5 per document |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Embedded: `Clinician`
+
+| Field | Type | Required | Default |
+|---|---|---|---|
+| `clinicianId` | String | ✅ | — |
+| `clinicianRole` | String | ✅ | — | Enum: `trainee`, `trainer` |
+| `clinicianEmail` | String | — | `""` |
+| `clinicianName` | String | — | `""` |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `userId` | Single |
+| `{ userId, profileId }` | **Unique** — one document per user/profile |
+| `clinicians.clinicianId` | Supports `$elemMatch` lookups |
+| `clinicians.clinicianRole` | Supports role-filtered queries |
+
+---
+
+## 13. `quiz-responses`
+
+Records a user's answers to a quiz within a course chapter.
+
+**Model file:** `src/models/quiz-responses.ts`  
+**Mongoose model:** `QuizResponse`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `userId` | ObjectId → User | ✅ | — | |
+| `courseId` | ObjectId → Course | ✅ | — | |
+| `chapterId` | ObjectId | ✅ | — | Chapter subdocument ID |
+| `quizIndex` | Number ≥ 0 | ✅ | `0` | Index of quiz within chapter |
+| `answers` | QuizAnswer[] | ✅ | `[]` | |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Embedded: `QuizAnswer`
+
+| Field | Type | Required |
+|---|---|---|
+| `questionIndex` | Number ≥ 0 | ✅ |
+| `selectedOptionIndexes` | Number[] | ✅ |
+| `isCorrect` | Boolean | — |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `{ userId, courseId, chapterId, createdAt: -1 }` | Quiz history lookup |
+
+---
+
+## 14. `notifications`
+
+In-app notifications sent to users. Auto-expire after 30 days via TTL index.
+
+**Model file:** `src/models/notification.ts`  
+**Mongoose model:** `Notification`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `userId` | String | ✅ | — | |
+| `title` | String | ✅ | — | |
+| `body` | String | ✅ | — | |
+| `data` | Mixed | — | `{}` | Arbitrary key-value metadata |
+| `read` | Boolean | — | `false` | |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `userId` | Single |
+| `read` | Single |
+| `{ userId, createdAt: -1 }` | User notification feed |
+| `{ createdAt: 1 }` | **TTL** — expires documents 30 days (`2592000s`) after creation |
+
+---
+
+## 15. `device-tokens`
+
+Stores push notification device tokens per user. One token per user (unique on `userId`).
+
+**Model file:** `src/models/device-token.ts`  
+**Mongoose model:** `DeviceToken`
+
+### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `_id` | ObjectId | auto | |
+| `userId` | String | ✅ | Unique — one token per user account |
+| `deviceToken` | String | ✅ | FCM/APNS token |
+| `deviceType` | String | ✅ | Enum: `ios`, `android`, `web` |
+| `createdAt` | Date | auto | |
+| `updatedAt` | Date | auto | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `userId` | **Unique** |
+| `deviceToken` | Single |
+
+---
+
+## 16. `support-tickets` (SupportTicket)
+
+User-submitted support tickets. Resolved tickets are automatically purged via TTL on `expireAt`.
+
+**Model file:** `src/models/support.ts`  
+**Mongoose model:** `SupportTicket`  
+**Note:** No explicit collection name — Mongoose defaults to `supporttickets`.
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `subject` | String | ✅ | — | |
+| `type` | String | ✅ | — | Slug pattern `[a-z0-9-]+` |
+| `description` | String | ✅ | — | |
+| `currentStatus` | String | ✅ | `"pending"` | Enum: `pending`, `resolved` |
+| `user.email` | String | ✅ | — | Snapshot of submitter |
+| `user.name` | String | ✅ | — | |
+| `user._id` | String | ✅ | — | |
+| `userId` | String | ✅ | — | Submitter's user ID |
+| `imageUrl` | String | — | `""` | Legacy single image |
+| `imageCloudinaryId` | String | — | `""` | |
+| `imageUrls` | String[] | — | `[]` | Multi-image support |
+| `imageCloudinaryIds` | String[] | — | `[]` | |
+| `videoUrls` | String[] | — | `[]` | |
+| `videoCloudinaryIds` | String[] | — | `[]` | |
+| `resolvedBy` | String | — | `null` | Admin user ID |
+| `resolvedAt` | Date | — | `null` | |
+| `expireAt` | Date | — | `null` | Set on resolution to trigger TTL purge |
+| `resolutionMsg` | String | — | `""` | |
+| `slackChannelId` | String | — | `""` | |
+| `slackMessageTs` | String | — | `""` | Slack thread timestamp |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `userId` | Single |
+| `{ currentStatus, userId, createdAt: -1 }` | Listing tickets by status and user |
+| `{ expireAt: 1 }` | **TTL** `expireAfterSeconds: 0` — deletes document at `expireAt` |
+
+---
+
+## 17. `ticket-types`
+
+Lookup table for support ticket categories. Seeds a default "App Technical Support" type on startup.
+
+**Model file:** `src/models/ticket-type.ts`  
+**Mongoose model:** `TicketType`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `name` | String | ✅ | — | Display name |
+| `slug` | String | ✅ | — | **Unique**, lowercase, `[a-z0-9-]+` |
+| `description` | String | — | `""` | |
+| `active` | Boolean | — | `true` | |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Default seed
+
+| name | slug |
+|---|---|
+| `App Technical Support` | `app-technical-support` |
+
+---
+
+## 18. `tags`
+
+Content tags used to categorise courses and short videos. Soft-deleted tags expire via TTL after ~6 months.
+
+**Model file:** `src/models/tags.ts`  
+**Mongoose model:** `Tag`
+
+### Fields
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `_id` | ObjectId | auto | — | |
+| `name` | String | ✅ | — | Trimmed |
+| `slug` | String | ✅ | — | **Unique**, lowercase, trimmed |
+| `active` | Boolean | — | `true` | |
+| `deletedAt` | Date | — | `undefined` | Set on soft delete |
+| `createdBy` | ObjectId → User | ✅ | — | |
+| `createdAt` | Date | auto | — | |
+| `updatedAt` | Date | auto | — | |
+
+### Indexes
+
+| Fields | Options |
+|---|---|
+| `slug` | **Unique** |
+| `{ deletedAt: 1 }` | **TTL** `expireAfterSeconds: 15552000` (~180 days) — purges soft-deleted tags |
+
+---
+
+## Subtitle Pipeline State Fields
+
+The following fields appear on both `short-videos` and `course-subtitle-jobs` (and mirrored into embedded `LessonVideo` on `courses`):
+
+| Field | Description |
+|---|---|
+| `subtitle_status` | Current state: `pending` → `processing` → `completed` / `failed` |
+| `subtitle_failure_reason` | Error message from last failed attempt |
+| `subtitle_retry_count` | How many times the worker has attempted this job |
+| `last_subtitle_attempt` | Timestamp of the most recent worker pickup |
+| `retryable` | Whether the failure is transient (worker may retry) |
+| `not_before` | Earliest datetime the worker may process this job (upload delay guard) |
+
+The worker (`src/workers/captionWorker.ts`) polls on a 60-second interval. On first upload, `not_before` is set to `now + 2 minutes` to allow Cloudinary time to finish processing the video before transcription is triggered.

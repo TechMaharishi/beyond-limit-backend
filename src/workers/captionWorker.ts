@@ -1,28 +1,11 @@
-/**
- * Subtitle Worker — MongoDB Polling Module
- *
- * Standalone polling worker (NOT inside any route file).
- * Uses setInterval with a 60-second interval.
- *
- * Handles TWO types of videos:
- *   1. ShortVideo — top-level documents with subtitle_status field
- *   2. CourseSubtitleJob — queue documents for deeply-embedded course videos
- *
- * On each tick the worker claims ONE job from either queue.
- */
-
 import { ShortVideo } from "@/models/short-videos";
 import { CourseSubtitleJob } from "@/models/course-subtitle-job";
 import { Course } from "@/models/course-videos";
 import cloudinary from "@/config/cloudinary";
 import logger from "@/utils/logger";
 
-const POLL_INTERVAL_MS = 60_000; // 60 seconds
-const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
-
-/* ─────────────────────────────────────────────
- * Stale-reset helpers (server-crash recovery)
- * ───────────────────────────────────────────── */
+const POLL_INTERVAL_MS = 60_000;
+const STALE_THRESHOLD_MS = 10 * 60 * 1000;
 
 async function resetStaleShortVideos(): Promise<void> {
   try {
@@ -64,10 +47,6 @@ async function resetStaleCourseJobs(): Promise<void> {
   }
 }
 
-/* ─────────────────────────────────────────────
- * Core Cloudinary trigger (shared logic)
- * ───────────────────────────────────────────── */
-
 async function triggerTranscription(publicId: string): Promise<void> {
   await (cloudinary as any).api.update(publicId, {
     resource_type: "video",
@@ -76,17 +55,12 @@ async function triggerTranscription(publicId: string): Promise<void> {
   });
 }
 
-/* ─────────────────────────────────────────────
- * Process ONE pending short-video
- * ───────────────────────────────────────────── */
-
 async function processPendingShortVideo(): Promise<boolean> {
   const now = new Date();
   const video = await ShortVideo.findOneAndUpdate(
     {
       subtitle_status: "pending",
       cloudinaryId: { $ne: "" },
-      // Only pick up jobs whose not_before has elapsed (respects upload-processing delay)
       not_before: { $lte: now },
     },
     {
@@ -99,7 +73,7 @@ async function processPendingShortVideo(): Promise<boolean> {
     { returnDocument: 'after' }
   );
 
-  if (!video) return false; // nothing to process
+  if (!video) return false;
 
   const publicId = String(video.cloudinaryId || "").trim();
   if (!publicId) {
@@ -147,17 +121,12 @@ async function processPendingShortVideo(): Promise<boolean> {
   return true;
 }
 
-/* ─────────────────────────────────────────────
- * Process ONE pending course subtitle job
- * ───────────────────────────────────────────── */
-
 async function processPendingCourseJob(): Promise<boolean> {
   const now = new Date();
   const job = await CourseSubtitleJob.findOneAndUpdate(
     {
       subtitle_status: "pending",
       cloudinaryId: { $ne: "" },
-      // Only pick up jobs whose not_before has elapsed (respects upload-processing delay)
       not_before: { $lte: now },
     },
     {
@@ -170,7 +139,7 @@ async function processPendingCourseJob(): Promise<boolean> {
     { returnDocument: 'after' }
   );
 
-  if (!job) return false; // nothing to process
+  if (!job) return false;
 
   const publicId = String(job.cloudinaryId || "").trim();
   if (!publicId) {
@@ -199,7 +168,6 @@ async function processPendingCourseJob(): Promise<boolean> {
     return true;
   }
 
-  // Sync "processing" state to embedded course videos
   try {
     await Course.updateOne(
       { _id: job.courseId },
@@ -264,13 +232,8 @@ async function processPendingCourseJob(): Promise<boolean> {
   return true;
 }
 
-/* ─────────────────────────────────────────────
- * Main poll tick — process one from either queue
- * ───────────────────────────────────────────── */
-
 async function pollTick(): Promise<void> {
   try {
-    // Try short-videos first, then course jobs
     const didShort = await processPendingShortVideo();
     if (!didShort) {
       await processPendingCourseJob();
@@ -280,14 +243,9 @@ async function pollTick(): Promise<void> {
   }
 }
 
-/* ─────────────────────────────────────────────
- * Public API — start the worker
- * ───────────────────────────────────────────── */
-
 export function startCaptionWorker(): void {
   logger.info("[SubtitleWorker] Starting subtitle polling worker (interval: 60s)");
 
-  // Reset stale jobs from previous crash
   resetStaleShortVideos().catch((err) => {
     logger.error("[SubtitleWorker] Startup reset (short-videos) failed:", err);
   });
@@ -295,14 +253,12 @@ export function startCaptionWorker(): void {
     logger.error("[SubtitleWorker] Startup reset (course-jobs) failed:", err);
   });
 
-  // Poll every 60 seconds
   setInterval(() => {
     pollTick().catch((err) => {
       logger.error("[SubtitleWorker] Poll tick error:", err);
     });
   }, POLL_INTERVAL_MS);
 
-  // Immediate first tick
   pollTick().catch((err) => {
     logger.error("[SubtitleWorker] Initial tick error:", err);
   });

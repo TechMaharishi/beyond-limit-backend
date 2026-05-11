@@ -29,9 +29,7 @@ const CoursePopularitySchema = new Schema<ICoursePopularity>(
   { timestamps: true }
 );
 
-// Ensure one doc per course+window
 CoursePopularitySchema.index({ courseId: 1, window: 1 }, { unique: true });
-// Fast sorting by score
 CoursePopularitySchema.index({ window: 1, score: -1, computedAt: -1 });
 
 export const CoursePopularity = model<ICoursePopularity>(

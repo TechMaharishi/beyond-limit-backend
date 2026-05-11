@@ -1,8 +1,6 @@
 import { Schema, model, Document, Types } from "mongoose";
 
 export interface IShortVideoProgress extends Document {
-  // For Admin / Trainer / Trainee: stores the user account ID.
-  // For User role: stores the active profile ID (each profile tracks independently).
   trackingId: string;
   shortVideoId: Types.ObjectId;
   watchedSeconds: number;

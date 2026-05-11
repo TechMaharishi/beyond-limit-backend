@@ -1,6 +1,5 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
 
-// Resources associated with a course (files, docs, etc.)
 export interface ICourseResource {
   name: string;
   url: string;
@@ -20,7 +19,6 @@ const CourseResourceSchema = new Schema(
   { _id: false }
 );
 
-// Lesson video item (embedded)
 export interface ILessonVideo {
   cloudinaryUrl: string;
   cloudinaryId: string;
@@ -33,7 +31,6 @@ export interface ILessonVideo {
     format: "vtt" | "srt";
     default?: boolean;
   }[];
-  /* ── subtitle-pipeline fields ── */
   subtitle_status?: "pending" | "processing" | "completed" | "failed";
   subtitle_failure_reason?: string | null;
   subtitle_retry_count?: number;
@@ -59,7 +56,6 @@ const LessonVideoSchema = new Schema(
     durationSeconds: { type: Number, default: 0, min: 0 },
     thumbnailUrl: { type: String },
     subtitles: { type: [SubtitleTrackSchema], default: [] },
-    /* ── subtitle-pipeline fields ── */
     subtitle_status: {
       type: String,
       enum: ["pending", "processing", "completed", "failed"],
@@ -73,7 +69,6 @@ const LessonVideoSchema = new Schema(
   { _id: false }
 );
 
-// Quiz structures
 export interface IQuizOption {
   text: string;
 }
@@ -140,7 +135,6 @@ const QuizSchema: Schema = new Schema(
   { _id: false }
 );
 
-// Lesson
 export interface ILesson {
   title: string;
   description?: string;
@@ -156,7 +150,6 @@ const LessonSchema = new Schema(
   { _id: false }
 );
 
-// Chapter
 export interface IChapter {
   _id?: Types.ObjectId;
   title: string;
@@ -173,7 +166,6 @@ const ChapterSchema = new Schema(
   { _id: true }
 );
 
-// Course model
 export interface ICourse extends Document {
   title: string;
   description: string;

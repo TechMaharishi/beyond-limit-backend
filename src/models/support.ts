@@ -9,7 +9,6 @@ export const SUPPORT_TYPE_SLUGS = [
 
 export type SupportType = string;
 
-
 export interface ISupportTicket {
   _id?: Types.ObjectId;
   subject: string;
@@ -37,8 +36,6 @@ export interface ISupportTicket {
   createdAt?: Date;
   updatedAt?: Date;
 }
-
-
 
 const SupportTicketSchema = new Schema(
   {
@@ -71,7 +68,6 @@ const SupportTicketSchema = new Schema(
     videoCloudinaryIds: { type: [String], default: [] },
     resolvedBy: { type: String, default: null },
     resolvedAt: { type: Date, default: null },
-    // TTL target date: only set when ticket is resolved
     expireAt: { type: Date, default: null },
     resolutionMsg: { type: String, default: "" },
     slackChannelId: { type: String, default: "" },
@@ -81,9 +77,6 @@ const SupportTicketSchema = new Schema(
 );
 
 SupportTicketSchema.index({ currentStatus: 1, userId: 1, createdAt: -1 });
-
-// TTL index: documents expire at the time specified by expireAt.
-// Unresolved tickets keep expireAt as null and will not be purged.
 SupportTicketSchema.index({ expireAt: 1 }, { expireAfterSeconds: 0 });
 
 export const SupportTicket = model<ISupportTicket>(

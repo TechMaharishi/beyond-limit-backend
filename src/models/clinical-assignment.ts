@@ -41,10 +41,7 @@ const ClinicalAssignmentSchema = new Schema<IClinicalAssignment>(
   { timestamps: true }
 );
 
-// One assignment doc per (user, profile) pair
 ClinicalAssignmentSchema.index({ userId: 1, profileId: 1 }, { unique: true });
-
-// Supports $elemMatch queries on the clinicians array (getUsersAssignedToTrainee)
 ClinicalAssignmentSchema.index({ "clinicians.clinicianId": 1 });
 ClinicalAssignmentSchema.index({ "clinicians.clinicianRole": 1 });
 

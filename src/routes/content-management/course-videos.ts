@@ -63,7 +63,6 @@ router.put("/admin/change-status-course/:id", writeLimiter, changeCourseStatus);
 router.post("/courses/videos-upload", writeLimiter, uploadLessonVideo);
 router.post("/courses/delete-cloudinary-video", writeLimiter, deleteCloudinaryVideo);
 
-// Subtitle retry endpoint for course videos
 router.post("/courses/:courseId/retry-subtitles", writeLimiter, retryCourseSubtitles);
 
 

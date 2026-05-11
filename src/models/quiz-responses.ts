@@ -16,7 +16,6 @@ export interface IQuizResponse extends Document {
   updatedAt: Date;
 }
 
-// Define as a plain Schema to avoid TypeScript union complexity
 const QuizAnswerSchema = new Schema(
   {
     questionIndex: { type: Schema.Types.Number, required: true, min: 0 },

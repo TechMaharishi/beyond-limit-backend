@@ -25,14 +25,11 @@ const CourseAssignmentSchema = new Schema<ICourseAssignment>(
   { timestamps: true }
 );
 
-// profileId="" for trainee targets; real profileId for user-role targets
 CourseAssignmentSchema.index(
   { assignedToId: 1, courseId: 1, assignedByRole: 1, profileId: 1 },
   { unique: true }
 );
-// Listing assignments for a user account, optionally scoped to profile
 CourseAssignmentSchema.index({ assignedToId: 1, profileId: 1, createdAt: -1 });
-// Listing assignments made by a specific assigner
 CourseAssignmentSchema.index({ assignedById: 1, assignedByRole: 1, createdAt: -1 });
 
 export const CourseAssignment = model<ICourseAssignment>(
